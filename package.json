@@ -1,0 +1,23 @@
+{
+  "name": "@stacko/linkedin-mcp",
+  "version": "0.1.0",
+  "description": "Moteur MCP de contenu LinkedIn : fournit une methode de redaction (le Claude du client redige) + rend les visuels on-brand (PNG / carrousel PDF) via headless Chrome. Multi-client par fichier de config.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "linkedin-mcp": "src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "mint": "node scripts/mint-token.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^4.19.2",
+    "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+# Donnees clients (tokens, brand books, historiques) : jamais commitees (RGPD).
+data/
+*.png
+*.pdf
