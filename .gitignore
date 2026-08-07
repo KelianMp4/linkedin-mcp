@@ -4,3 +4,4 @@ data/
 *.png
 *.pdf
 .gstack/
+DOGFOOD.md
