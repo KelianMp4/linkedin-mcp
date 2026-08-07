@@ -11,11 +11,24 @@ Le **Bearer token = l'identite du client**. Le serveur en deduit `data/<token>/`
 - `setup_brand` — enregistre voix + charte du client (onboarding, une fois).
 - `get_playbook` — fournit la methode + la voix pour que **le Claude du client redige**.
   Aucun texte genere cote serveur => **aucun cout de token pour l'hebergeur**.
+- `register_font(role, source)` — enregistre la police on-brand du client (par role
+  `title`/`body`). `source` = un nom de famille Google Fonts (le serveur resout et
+  telecharge le woff2) **ou** une URL https d'un fichier woff2/woff/ttf/otf. La police
+  est stockee dans `data/<token>/fonts/` et injectee en `@font-face` local : **aucune
+  requete reseau au rendu**. Garde-fou SSRF (https + IP publique + type/taille controles).
 - `render_carousel(slides)` — carrousel on-brand en **PDF** (format LinkedIn).
 - `render_image(slide)` — image seule on-brand en **PNG** (1080x1350).
 - `log_post` / `list_posts` — suivi des posts (metriques saisies a la main).
 
-Rendu via **headless Chrome** (meme pipeline que l'agent `linkedin-visuals`).
+Rendu via **headless Chrome**. Le texte est **auto-ajuste** (aucune coupe : la police
+retrecit jusqu'a ce que tout rentre) et la capture attend le chargement des polices
+(`--virtual-time-budget`). Sans police enregistree, rendu en police systeme neutre.
+
+## Tester
+
+```bash
+npm test   # node:test — isolation par token, rendu smoke, auto-fit, garde SSRF, playbook
+```
 
 ## Modele
 
@@ -41,10 +54,12 @@ curl localhost:3000/health
 3. Le client branche ce connecteur MCP dans son Claude, lance `setup_brand`
    (Claude l'interroge sur son brand book), puis genere ses posts + visuels.
 
-## Deploiement (monorepo Stacko)
+## Deploiement (repo autonome, open-core)
 
-Service Docker + route Caddy (ex. `mcp.stacko.fr`). Voir `Dockerfile`. Variables :
-`LINKEDIN_MCP_TOKEN` (Bearer partage), `PORT`, `CHROME_BIN`.
+Ce moteur reste un **repo separe** (MIT) : pas dans le monorepo Stacko prive.
+Il se deploie comme **son propre service** (perf isolee : le rendu Chrome ne touche
+aucun autre service). Build depuis la racine du repo (`docker build .`), route Caddy
+(ex. `mcp.stacko.fr`). Variables : `PORT`, `CHROME_BIN`, `DATA_DIR` (volume persistant).
 
 ## Brancher cote client
 

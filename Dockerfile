@@ -12,11 +12,11 @@ ENV CHROME_BIN=/usr/bin/chromium \
     DATA_DIR=/data
 
 WORKDIR /app
-COPY apps/linkedin-mcp/package.json ./
+COPY package.json ./
 RUN npm install --omit=dev
 
-COPY apps/linkedin-mcp/src ./src
-COPY apps/linkedin-mcp/scripts ./scripts
+COPY src ./src
+COPY scripts ./scripts
 
 # Donnees clients (tokens, brand, historiques) : volume persistant.
 VOLUME ["/data"]

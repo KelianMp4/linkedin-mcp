@@ -9,63 +9,25 @@
 
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { render } from "./render.mjs";
+import { registerFont } from "./fonts.mjs";
+import { playbook } from "./playbook.mjs";
 import {
   resolveToken,
   getBrand,
   setBrand,
+  updateVisual,
   appendPost,
   listPosts,
   listTokens,
 } from "./store.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
-
-// Methode de redaction fournie au Claude du client (il redige, pas le serveur).
-function playbook(brand) {
-  const v = brand.voice || {};
-  const p = v.produit || {};
-  const lines = [
-    `Tu rediges un post LinkedIn pour la marque "${brand.client}".`,
-    ``,
-    `# Voix`,
-    `Registre : ${v.registre || "sobre"}. Langue : ${v.langue || "fr"}.`,
-  ];
-  if ((v.regles || []).length) {
-    lines.push(`Regles non negociables :`, ...v.regles.map((r) => `- ${r}`));
-  }
-  if (p.nom) {
-    lines.push(
-      ``,
-      `# Produit`,
-      `Nom : ${p.nom}. Pitch : ${p.pitch || ""}.`,
-      `Cible : ${p.cible || ""}. Prix : ${p.prix || ""}. URL : ${p.url || ""}.`,
-      p.preuve ? `Preuve a citer : ${p.preuve}.` : ``
-    );
-  }
-  lines.push(
-    ``,
-    `# Bonnes pratiques canal (dures)`,
-    `1. Accroche forte en premiere ligne. Jamais de lien dans le corps (algo -30/-60%) : finir par "Lien en commentaire".`,
-    `2. Preuve par les chiffres, pas de jargon.`,
-    `3. Fin orientee conversation (question / invitation au DM), jamais un lien externe. Le DM vend.`,
-    ``,
-    `Visuel : appelle render_carousel (plan de slides) ou render_image (une slide).`,
-    `Apres publication, loggue avec log_post (metriques saisies a la main, jamais inventees).`
-  );
-  if (brand._default) {
-    lines.push(
-      ``,
-      `NOTE : aucune identite de marque enregistree. Lance d'abord l'outil setup_brand ` +
-        `pour capturer voix + charte, sinon les visuels sortent en charte neutre.`
-    );
-  }
-  return lines.filter((l) => l !== undefined).join("\n");
-}
 
 const slideShape = z.object({
   titre: z.string().optional(),
@@ -107,6 +69,37 @@ const brandInput = z.object({
     .optional(),
 });
 
+// Message d'erreur lisible pour le client (jamais une stack brute).
+function humanRenderError(e) {
+  const msg = String(e?.message || e);
+  if (/introuvable|ENOENT|exit|echoue/i.test(msg))
+    return "le moteur de rendu (Chrome) n'a pas repondu. Reessaie ; si ca persiste, previens l'hebergeur.";
+  return msg;
+}
+
+// Rendu partage entre render_image (png) et render_carousel (pdf) : un seul
+// endroit pour le rendu, l'erreur lisible et le passage du dossier polices.
+async function renderTool(ctx, slides, format, label) {
+  try {
+    const brand = await getBrand(ctx);
+    const fontsDir = join(ctx.dir, "fonts");
+    const out = await render(slides, brand.visual, format, fontsDir);
+    const uri = format === "pdf" ? "carousel.pdf" : "image.png";
+    const detail = format === "pdf" ? `${out.slides} slides, ` : "";
+    return {
+      content: [
+        { type: "text", text: `${label} : ${detail}${brand.client}.` },
+        { type: "resource", resource: { uri, mimeType: out.mimeType, blob: out.base64 } },
+      ],
+    };
+  } catch (e) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `Rendu echoue : ${humanRenderError(e)}` }],
+    };
+  }
+}
+
 function buildServer(ctx) {
   const server = new McpServer({ name: "linkedin-mcp", version: "0.1.0" });
 
@@ -146,16 +139,7 @@ function buildServer(ctx) {
         "Rend un carrousel LinkedIn on-brand en PDF (format exige par LinkedIn). 5 a 8 slides : slide 1 = accroche seule, derniere = CTA conversation.",
       inputSchema: { slides: z.array(slideShape).min(1).max(8) },
     },
-    async ({ slides }) => {
-      const brand = await getBrand(ctx);
-      const out = await render(slides, brand.visual, "pdf");
-      return {
-        content: [
-          { type: "text", text: `Carrousel rendu : ${out.slides} slides, ${brand.client}.` },
-          { type: "resource", resource: { uri: "carousel.pdf", mimeType: out.mimeType, blob: out.base64 } },
-        ],
-      };
-    }
+    async ({ slides }) => renderTool(ctx, slides, "pdf", "Carrousel rendu")
   );
 
   server.registerTool(
@@ -165,15 +149,39 @@ function buildServer(ctx) {
       description: "Rend une image LinkedIn seule (1080x1350) on-brand en PNG.",
       inputSchema: { slide: slideShape },
     },
-    async ({ slide }) => {
-      const brand = await getBrand(ctx);
-      const out = await render([slide], brand.visual, "png");
-      return {
-        content: [
-          { type: "text", text: `Image rendue : ${brand.client}.` },
-          { type: "resource", resource: { uri: "image.png", mimeType: out.mimeType, blob: out.base64 } },
-        ],
-      };
+    async ({ slide }) => renderTool(ctx, [slide], "png", "Image rendue")
+  );
+
+  server.registerTool(
+    "register_font",
+    {
+      title: "Enregistrer une police de marque (par client)",
+      description:
+        "Enregistre la police on-brand du client pour un role (titre ou corps). 'source' = un nom de famille Google Fonts (ex: \"Inter\") OU une URL https vers un fichier woff2/woff/ttf/otf. Le serveur telecharge et stocke la police localement ; les rendus l'utilisent ensuite sans requete reseau. A appeler apres setup_brand, une fois par role.",
+      inputSchema: {
+        role: z.enum(["title", "body"]).describe("title = police des titres/chiffres, body = police du corps"),
+        source: z.string().describe("nom de famille Google Fonts OU URL https d'un fichier de police"),
+      },
+    },
+    async ({ role, source }) => {
+      try {
+        const info = await registerFont(ctx, role, source);
+        const key = role === "title" ? "titleFontFile" : "bodyFontFile";
+        await updateVisual(ctx, { [key]: info.filename });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Police ${role} enregistree (${info.ext}, ${info.bytes} octets). Les prochains rendus l'utiliseront.`,
+            },
+          ],
+        };
+      } catch (e) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Enregistrement police echoue : ${String(e?.message || e)}` }],
+        };
+      }
     }
   );
 

@@ -82,6 +82,17 @@ export async function setBrand(ctx, brand) {
   return clean;
 }
 
+// Merge partiel dans visual (sans ecraser le reste du brand). Utilise par
+// register_font pour poser titleFontFile / bodyFontFile apres coup.
+export async function updateVisual(ctx, patch) {
+  const path = join(ctx.dir, "brand.json");
+  const base = (await readJson(path, null)) || { client: ctx.client, voice: {}, visual: {} };
+  base.client = ctx.client;
+  base.visual = { ...(base.visual || {}), ...patch };
+  await writeJson(path, base);
+  return base;
+}
+
 // --- Suivi des posts ---
 export async function appendPost(ctx, entry) {
   const path = join(ctx.dir, "history.json");

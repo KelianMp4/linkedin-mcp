@@ -1,0 +1,16 @@
+# Exemple de reverse-proxy HTTPS pour un self-hosting standalone de ce moteur.
+# (Claude Desktop exige du https public.) Caddy gere le certificat tout seul.
+#
+# Le serveur MCP ecoute en HTTP (defaut :3000). Adapte le domaine et la cible.
+#
+#   docker build -t linkedin-mcp .
+#   docker run -d --name linkedin-mcp -p 127.0.0.1:3000:3000 -v lkm_data:/data linkedin-mcp
+#   caddy run --config ./Caddyfile
+#
+# NOTE (deploiement Stacko) : sur le VPS partage, ce fichier n'est PAS utilise.
+# Le routing mcp.stacko.fr vit dans le Caddyfile du monorepo (reverse_proxy par
+# nom de conteneur `linkedin-mcp:3000`, meme reseau docker). Rien a faire ici.
+
+mcp.example.com {
+	reverse_proxy 127.0.0.1:3000
+}

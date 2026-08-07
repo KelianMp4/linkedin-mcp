@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/server.mjs",
     "dev": "node --watch src/server.mjs",
-    "mint": "node scripts/mint-token.mjs"
+    "mint": "node scripts/mint-token.mjs",
+    "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
