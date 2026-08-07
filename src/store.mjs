@@ -35,8 +35,9 @@ async function readJson(path, fallback) {
   }
 }
 
+// Donnees clients (tokens, brand, historiques) : fichiers en 0600 (audit CSO F3).
 async function writeJson(path, val) {
-  await writeFile(path, JSON.stringify(val, null, 2), "utf8");
+  await writeFile(path, JSON.stringify(val, null, 2), { encoding: "utf8", mode: 0o600 });
 }
 
 // Registre des tokens : { "<token>": { client, created } }.
@@ -49,18 +50,18 @@ export async function resolveToken(token) {
   const entry = reg[token];
   if (!entry) return null;
   const dir = join(DATA_DIR, token);
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   return { token, client: entry.client, dir };
 }
 
 // Mint : cree un token, l'enregistre, prepare son dossier. Utilise par le CLI.
 export async function mintToken(client) {
-  await mkdir(DATA_DIR, { recursive: true });
+  await mkdir(DATA_DIR, { recursive: true, mode: 0o700 });
   const reg = await loadRegistry();
   const token = "lkm_" + randomBytes(24).toString("base64url");
   reg[token] = { client, created: new Date().toISOString() };
   await writeJson(REGISTRY, reg);
-  await mkdir(join(DATA_DIR, token), { recursive: true });
+  await mkdir(join(DATA_DIR, token), { recursive: true, mode: 0o700 });
   return token;
 }
 

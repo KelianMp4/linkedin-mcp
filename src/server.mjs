@@ -14,9 +14,11 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { render } from "./render.mjs";
 import { registerFont } from "./fonts.mjs";
 import { playbook } from "./playbook.mjs";
+import { createOAuth } from "./oauth.mjs";
 import {
   resolveToken,
   getBrand,
@@ -25,9 +27,13 @@ import {
   appendPost,
   listPosts,
   listTokens,
+  DATA_DIR,
 } from "./store.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
+// URL publique (https derriere Caddy). Sert d'issuer + resource dans les
+// metadonnees OAuth. En prod : PUBLIC_URL=https://mcp.stacko.fr.
+const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 
 const slideShape = z.object({
   titre: z.string().optional(),
@@ -233,6 +239,53 @@ function buildServer(ctx) {
 
 const app = express();
 app.use(express.json({ limit: "4mb" }));
+app.use(express.urlencoded({ extended: false }));
+
+// --- OAuth 2.1 (Claude Desktop/web/Team exigent le flow). Claude Code garde le
+// Bearer lkm_ direct via resolveBearer. Le SDK fournit discovery/register/token/
+// revoke ; oauth.mjs porte la logique (pont sur lkm_, isolation par client).
+const oauth = createOAuth({ dataDir: DATA_DIR, resolveToken, publicUrl: PUBLIC_URL });
+await oauth.hydrate();
+
+app.use(
+  mcpAuthRouter({
+    provider: oauth.provider,
+    issuerUrl: new URL(PUBLIC_URL),
+    resourceServerUrl: new URL(PUBLIC_URL),
+    resourceName: "linkedin-mcp",
+  })
+);
+
+// Soumission de la page de consentement (/authorize a cree la session serveur) :
+// relit la session (params valides), verifie CSRF, valide le lkm_, emet un code
+// usage unique et redirige. Ne fait JAMAIS confiance aux params du formulaire.
+app.post("/authorize/consent", async (req, res) => {
+  const b = req.body || {};
+  const out = await oauth.grantCodeFromSession({
+    sessionId: b.sid,
+    csrf: b.csrf,
+    lkmToken: b.lkm_token,
+  });
+  if (out.error) {
+    const status = out.sessionId ? 400 : 410; // 410 si la session a disparu
+    res
+      .status(status)
+      .set("content-type", "text/html; charset=utf-8")
+      .send(
+        oauth.consentPage({
+          sessionId: out.sessionId,
+          csrf: out.csrf,
+          redirectHost: out.redirectHost,
+          error: out.error,
+        })
+      );
+    return;
+  }
+  const u = new URL(out.redirectUri);
+  u.searchParams.set("code", out.code);
+  if (out.state) u.searchParams.set("state", out.state);
+  res.redirect(302, u.toString());
+});
 
 app.get("/health", async (_req, res) => {
   res.json({ ok: true, clients: (await listTokens()).length });
@@ -245,7 +298,8 @@ const transports = {};
 async function tokenCtx(req) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  return token ? resolveToken(token) : null;
+  // Double chemin : lkm_ brut (Claude Code) OU access token OAuth (Desktop/web).
+  return token ? oauth.resolveBearer(token) : null;
 }
 
 app.post("/mcp", async (req, res) => {
