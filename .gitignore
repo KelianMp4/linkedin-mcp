@@ -5,3 +5,5 @@ data/
 *.pdf
 .gstack/
 DOGFOOD.md
+LINKEDIN-API-APPLICATION.md
+.env
