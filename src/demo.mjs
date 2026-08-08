@@ -10,7 +10,7 @@ import { Router } from "express";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { render } from "./render.mjs";
 import { DEFAULT_VISUAL } from "./store.mjs";
-import { authorizeUrl, exchangeCode, getMember, publishText, publishImage, isConfigured } from "./linkedin.mjs";
+import { authorizeUrl, exchangeCode, getMember, publishText, publishImage, getSocialActions, isConfigured } from "./linkedin.mjs";
 
 const sessions = new Map(); // sid -> { authed, csrf, linkedin:{accessToken,urn,name}|null, oauthState }
 const rid = (p) => `${p}_${randomBytes(24).toString("base64url")}`;
@@ -193,18 +193,66 @@ export function demoRouter() {
       } else {
         result = await publishText(s.linkedin.accessToken, s.linkedin.urn, caption);
       }
+      s.lastPost = { urn: result.id, url: result.url };
       res.send(
         page(
           "Publié",
           `<div class="card"><h1 class="ok">✔ Publié sur LinkedIn</h1>
             <p>Le post a été publié sur le profil connecté.</p>
             ${result.url ? `<a class="btn" href="${result.url}" target="_blank" rel="noopener">Voir le post</a>` : '<p class="muted">(Post créé — id retourné par LinkedIn.)</p>'}
+          </div>
+          <div class="card">
+            <h2>3. Suivi de l'engagement (analytics)</h2>
+            <p class="muted">Lecture des réactions/commentaires du post via l'API (capability « monitor engagement »).</p>
+            <a class="btn" href="/demo/stats">Voir les statistiques du post</a>
             <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Rédiger un autre post</a></p>
           </div>`
         )
       );
     } catch (e) {
       res.status(502).send(page("Échec", `<div class="card"><h1 class="warn">Publication échouée</h1><p>${e.message}</p><a href="/demo/app">Retour</a></div>`));
+    }
+  });
+
+  // Stats du dernier post publié : tente de lire le vrai engagement. Si l'API
+  // refuse (tier), affiche un état "en attente d'accès" — JAMAIS de faux chiffres.
+  r.get("/demo/stats", async (req, res) => {
+    const s = getSession(req, res);
+    if (!s.authed) return res.redirect("/demo");
+    if (!s.linkedin || !s.lastPost) {
+      return res.send(page("Stats", '<div class="card"><p class="warn">Aucun post publié dans cette session. <a href="/demo/app">Rédiger</a></p></div>'));
+    }
+    const back = `<p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a>${s.lastPost.url ? ` · <a href="${s.lastPost.url}" target="_blank" rel="noopener" style="color:#8ab">Voir le post</a>` : ""}</p>`;
+    try {
+      const stats = await getSocialActions(s.linkedin.accessToken, s.lastPost.urn);
+      res.send(
+        page(
+          "Stats",
+          `<div class="card"><h1>Engagement du post</h1>
+            <p class="ok">✔ Données live via l'API LinkedIn</p>
+            <p style="font-size:22px"><b>${stats.likes}</b> réactions &nbsp;·&nbsp; <b>${stats.comments}</b> commentaires</p>
+            <p class="muted">Rafraîchis dans quelques minutes pour voir l'engagement monter.</p>${back}
+          </div>`
+        )
+      );
+    } catch (e) {
+      if (e.pending) {
+        // Cas attendu en tier dev : l'accès analytics est justement ce qu'on demande.
+        res.send(
+          page(
+            "Stats",
+            `<div class="card"><h1>Engagement du post</h1>
+              <p class="warn">⏳ Analytics en attente de l'accès API</p>
+              <p>La lecture de l'engagement (réactions, commentaires, impressions) fait partie
+              de la capability « monitor engagement » demandée dans la Community Management API.
+              Une fois l'accès accordé, ces chiffres s'afficheront ici, pour le post ci-dessus.</p>
+              <p class="muted">Aucun chiffre inventé : c'est bien l'emplacement où l'analytics se branchera.</p>${back}
+            </div>`
+          )
+        );
+      } else {
+        res.status(502).send(page("Stats", `<div class="card"><p class="warn">Lecture stats échouée : ${e.message}</p>${back}</div>`));
+      }
     }
   });
 

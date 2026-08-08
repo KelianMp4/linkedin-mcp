@@ -57,3 +57,38 @@ test("LINKEDIN_REDIRECT_URI override respecté", () => {
     }
   );
 });
+
+// Mock de global.fetch pour tester getSocialActions sans réseau.
+async function withFetch(stub, fn) {
+  const real = global.fetch;
+  global.fetch = stub;
+  try {
+    return await fn();
+  } finally {
+    global.fetch = real;
+  }
+}
+
+test("getSocialActions : URN manquant -> throw", async () => {
+  await assert.rejects(() => li.getSocialActions("tok", ""), /URN/);
+});
+
+test("getSocialActions : 403 -> erreur pending (en attente d'accès)", async () => {
+  await withFetch(async () => ({ status: 403, ok: false, text: async () => "denied" }), async () => {
+    await assert.rejects(
+      () => li.getSocialActions("tok", "urn:li:share:123"),
+      (e) => e.pending === true
+    );
+  });
+});
+
+test("getSocialActions : 200 -> parse likes + commentaires", async () => {
+  await withFetch(
+    async () => ({ status: 200, ok: true, json: async () => ({ likesSummary: { totalLikes: 7 }, commentsSummary: { count: 2 } }) }),
+    async () => {
+      const s = await li.getSocialActions("tok", "urn:li:share:123");
+      assert.equal(s.likes, 7);
+      assert.equal(s.comments, 2);
+    }
+  );
+});

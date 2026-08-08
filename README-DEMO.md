@@ -92,7 +92,14 @@ Enregistre ton écran (Loom / OBS / QuickTime) en faisant, dans l'ordre :
    sans ce clic** (human-in-the-loop).
 7. Montre l'écran **« ✔ Publié sur LinkedIn »** → clique **« Voir le post »** →
    le post **réel** sur LinkedIn.
-8. (Optionnel) Montre que sans le clic d'approbation, rien ne part.
+8. Reviens et clique **« Voir les statistiques du post »** → montre le panneau
+   analytics :
+   - Si l'API renvoie les données (tier autorisé) → les **vraies** réactions/
+     commentaires s'affichent (« monitor engagement »).
+   - Sinon → l'état **« Analytics en attente de l'accès API »** qui explique que
+     c'est exactement la capability demandée. **C'est un plus pour la review** :
+     tu montres où l'analytics se branche, sans inventer de chiffres.
+9. (Optionnel) Montre que sans le clic d'approbation, rien ne part.
 
 Upload la vidéo (Loom / YouTube non-répertorié / Drive public) et colle le lien
 dans le champ « screen recording ».
@@ -124,13 +131,21 @@ dans le champ « screen recording ».
   utilise l'endpoint v2 classique (`/v2/ugcPosts`) qui ne l'exige pas ; sinon,
   bascule sur `/rest/posts` avec le header (petit ajustement dans `src/linkedin.mjs`).
 
-## 8. Ce que la démo NE fait PAS (assumé)
+## 8. Analytics (monitor engagement)
 
-- **Pas d'analytics** : lire l'engagement est sur un tier plus dur. La démo prouve
-  la **publication avec consentement + approbation**. Le suivi métriques reste
-  manuel (`log_post`) pour l'instant.
+La démo **tente** de lire l'engagement du post publié (réactions + commentaires)
+via l'API. En tier développement, l'API peut refuser (403) — c'est justement
+l'accès demandé. Dans ce cas la démo affiche « **Analytics en attente de l'accès
+API** » au lieu d'inventer des chiffres. Une fois la Community Management API
+accordée, les vrais chiffres s'affichent. **Ne jamais présenter de faux chiffres
+comme réels** — les reviewers LinkedIn rejettent les mockups déguisés.
+
+## 9. Ce que la démo NE fait PAS (assumé)
+
 - **Pas d'auto-post planifié** : chaque publication = un clic humain. C'est
   volontaire (conformité LinkedIn + confiance client).
+- **Suppression membre** : outil `delete_member` à ajouter avant d'ouvrir à de
+  vrais comptes (tu as répondu « Yes » à la suppression sécurisée dans le dossier).
 
 ---
 

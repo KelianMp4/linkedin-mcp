@@ -148,3 +148,25 @@ export async function publishImage(accessToken, authorUrn, text, imageBuffer, mi
 function postUrl(id) {
   return id ? `https://www.linkedin.com/feed/update/${id}/` : null;
 }
+
+// Lit l'engagement (réactions + commentaires) d'un post que le membre a publié.
+// Endpoint socialActions v2. En tier développement, peut renvoyer 403 (l'accès
+// analytics fait partie de ce qu'on demande) -> on remonte une erreur typée que
+// l'UI transforme en "en attente d'accès API", jamais en faux chiffres.
+export async function getSocialActions(accessToken, shareUrn) {
+  if (!shareUrn) throw new Error("URN du post manquant");
+  const res = await fetch(`https://api.linkedin.com/v2/socialActions/${encodeURIComponent(shareUrn)}`, {
+    headers: { authorization: `Bearer ${accessToken}`, "x-restli-protocol-version": "2.0.0" },
+  });
+  if (res.status === 403 || res.status === 401) {
+    const err = new Error("accès analytics non accordé (tier)");
+    err.pending = true; // <- l'UI affiche "en attente d'accès API"
+    throw err;
+  }
+  if (!res.ok) throw new Error(`LinkedIn stats échec (${res.status}): ${(await res.text()).slice(0, 200)}`);
+  const j = await res.json();
+  // Champs défensifs (LinkedIn varie selon les versions).
+  const likes = j?.likesSummary?.totalLikes ?? j?.likesSummary?.aggregatedTotalLikes ?? 0;
+  const comments = j?.commentsSummary?.count ?? j?.commentsSummary?.aggregatedTotalComments ?? 0;
+  return { likes, comments };
+}
