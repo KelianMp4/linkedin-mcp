@@ -19,6 +19,7 @@ import { render } from "./render.mjs";
 import { registerFont } from "./fonts.mjs";
 import { playbook } from "./playbook.mjs";
 import { createOAuth } from "./oauth.mjs";
+import { demoRouter } from "./demo.mjs";
 import {
   resolveToken,
   getBrand,
@@ -286,6 +287,9 @@ app.post("/authorize/consent", async (req, res) => {
   if (out.state) u.searchParams.set("state", out.state);
   res.redirect(302, u.toString());
 });
+
+// Surface web de démo (review LinkedIn) : /demo/*. Login de test + OAuth LinkedIn.
+app.use(demoRouter());
 
 app.get("/health", async (_req, res) => {
   res.json({ ok: true, clients: (await listTokens()).length });
