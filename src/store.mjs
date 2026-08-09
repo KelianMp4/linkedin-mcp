@@ -4,7 +4,7 @@
 // Taille : quelques Ko par client. Le token (Bearer) EST l'identite : le serveur
 // en deduit le dossier, le client ne peut pas taper dans celui d'un autre.
 
-import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -68,6 +68,21 @@ export async function mintToken(client) {
 export async function listTokens() {
   const reg = await loadRegistry();
   return Object.entries(reg).map(([t, v]) => ({ token: t, ...v }));
+}
+
+// Droit a l'effacement (RGPD art. 17) : efface DEFINITIVEMENT toutes les donnees
+// d'un client — son dossier data/<token>/ (brand + historique + polices) et son
+// entree de registre. Le token devient invalide (resolveToken renverra null, ce
+// qui fait tomber aussi ses tokens OAuth via resolveBearer). Irreversible.
+// Renvoie { removed: bool, client } ; removed=false si le token n'existait pas.
+export async function deleteClientData(token) {
+  const reg = await loadRegistry();
+  const entry = reg[token];
+  if (!entry) return { removed: false, client: null };
+  await rm(join(DATA_DIR, token), { recursive: true, force: true });
+  delete reg[token];
+  await writeJson(REGISTRY, reg);
+  return { removed: true, client: entry.client };
 }
 
 // --- Brand ---

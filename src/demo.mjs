@@ -138,6 +138,39 @@ export function demoRouter() {
             <input name="visualTitle" placeholder="Laisse vide pour un post texte seul">
             <button type="submit" ${connected ? "" : "disabled"}>Approuver et publier${connected ? "" : " (connecte LinkedIn d'abord)"}</button>
           </form>
+        </div>
+        <div class="card">
+          <h2>Confidentialité — droit à l'effacement (RGPD art. 17)</h2>
+          <p class="muted">Cet espace ne conserve que la connexion LinkedIn de ta session
+          (jeton d'accès, nom, identifiant), en mémoire, le temps de la démo. Aucune donnée
+          n'est vendue ni partagée. Tu peux tout effacer à tout moment, immédiatement.</p>
+          <form method="post" action="/demo/delete">
+            <input type="hidden" name="csrf" value="${s.csrf}">
+            <button type="submit" style="background:#7a2b2b">Supprimer mes données</button>
+          </form>
+        </div>`
+      )
+    );
+  });
+
+  // Droit a l'effacement (RGPD art. 17) cote demo : purge la connexion LinkedIn
+  // de la session (jeton d'acces, urn, nom) + le dernier post memorise. Rien
+  // n'est stocke sur disque par la demo, donc effacer la session suffit.
+  r.post("/demo/delete", (req, res) => {
+    const s = getSession(req, res);
+    if (!s.authed) return res.redirect("/demo");
+    if (!safeEqual((req.body || {}).csrf, s.csrf)) {
+      return res.status(403).send(page("Erreur", '<div class="card"><p class="warn">Jeton de sécurité invalide.</p></div>'));
+    }
+    s.linkedin = null;
+    s.lastPost = null;
+    res.send(
+      page(
+        "Données supprimées",
+        `<div class="card"><h1 class="ok">✔ Données supprimées</h1>
+          <p>La connexion LinkedIn et les informations de cette session ont été
+          effacées immédiatement et définitivement. Droit à l'effacement (RGPD art. 17) exercé.</p>
+          <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a></p>
         </div>`
       )
     );

@@ -28,6 +28,7 @@ import {
   appendPost,
   listPosts,
   listTokens,
+  deleteClientData,
   DATA_DIR,
 } from "./store.mjs";
 
@@ -232,6 +233,43 @@ function buildServer(ctx) {
     async () => {
       const hist = await listPosts(ctx);
       return { content: [{ type: "text", text: JSON.stringify(hist, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "delete_my_data",
+    {
+      title: "Supprimer toutes mes donnees (droit a l'effacement, RGPD art. 17)",
+      description:
+        "Efface DEFINITIVEMENT toutes les donnees du client : identite de marque, historique des posts, polices, et l'entree de registre associee au token. Action irreversible : exige confirm=true. Apres suppression le token devient invalide.",
+      inputSchema: {
+        confirm: z
+          .boolean()
+          .describe("doit valoir true pour confirmer la suppression definitive et irreversible"),
+      },
+    },
+    async ({ confirm }) => {
+      if (!confirm) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Suppression annulee : rappelle delete_my_data avec confirm=true pour effacer definitivement toutes tes donnees.",
+            },
+          ],
+        };
+      }
+      const out = await deleteClientData(ctx.token);
+      return {
+        content: [
+          {
+            type: "text",
+            text: out.removed
+              ? `Toutes les donnees de ${out.client} ont ete supprimees definitivement (identite, historique, polices, token). Le droit a l'effacement (RGPD art. 17) est exerce.`
+              : "Aucune donnee a supprimer pour ce token.",
+          },
+        ],
+      };
     }
   );
 

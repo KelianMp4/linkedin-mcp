@@ -66,3 +66,25 @@ test("append/list posts fait un roundtrip", async () => {
   assert.equal(hist.length, 2);
   assert.equal(hist[0].theme, "lancement");
 });
+
+test("RGPD art. 17 : deleteClientData efface le dossier et invalide le token", async () => {
+  const t = await store.mintToken("A effacer");
+  const ctx = await store.resolveToken(t);
+  await store.setBrand(ctx, { voice: { registre: "sensible" }, visual: {} });
+
+  const out = await store.deleteClientData(t);
+  assert.equal(out.removed, true);
+  assert.equal(out.client, "A effacer");
+
+  // Token invalide apres suppression : resolveToken renvoie null.
+  assert.equal(await store.resolveToken(t), null);
+  // Absent du registre.
+  const reg = await store.loadRegistry();
+  assert.equal(reg[t], undefined);
+});
+
+test("deleteClientData sur token inconnu ne casse pas (removed=false)", async () => {
+  const out = await store.deleteClientData("lkm_jamais_vu");
+  assert.equal(out.removed, false);
+  assert.equal(out.client, null);
+});
