@@ -56,7 +56,7 @@ const trunc = (t, n = 64) => (t.length > n ? t.slice(0, n) + "…" : t);
 
 // Tableau « suivi des publications » : vrais posts publiés via la démo (engagement
 // lu en direct via l'API, lien par ligne) + exemples étiquetés (illustratifs).
-function publicationsTable(realPosts) {
+function publicationsTable(realPosts, examples) {
   const realRows = realPosts
     .slice()
     .reverse()
@@ -69,20 +69,75 @@ function publicationsTable(realPosts) {
       </tr>`
     )
     .join("");
-  const sampleRows = DEMO_SAMPLE_POSTS.map(
-    (p) => `<tr>
+  const sampleRows = examples
+    .map(
+      (p) => `<tr>
       <td class="muted">${esc(p.date)}</td>
       <td>${esc(trunc(p.text))}</td>
       <td><span class="tag tag-ex">exemple</span></td>
       <td class="muted">${p.reactions} · ${p.comments} <span class="muted">(illustratif)</span></td>
     </tr>`
-  ).join("");
+    )
+    .join("");
   return `<table class="pub">
       <thead><tr><th>Date</th><th>Post</th><th>Type</th><th>Engagement</th></tr></thead>
       <tbody>${realRows}${sampleRows}</tbody>
     </table>
     <p class="muted" style="margin-top:10px">Lignes <b>publié</b> : vrais posts de cette démo, engagement lu
     en direct via l'API LinkedIn. Lignes <b>exemple</b> : illustration du suivi — chiffres NON issus de l'API.</p>`;
+}
+
+// Ruban d'onboarding : où en est l'utilisateur (connecter → publier → suivre).
+function stepper(connected, hasPosts) {
+  const s1 = connected ? "done" : "active";
+  const s2 = hasPosts ? "done" : connected ? "active" : "";
+  const s3 = hasPosts ? "active" : "";
+  return `<div class="stepper">
+    <div class="step ${s1}"><span class="n">${connected ? "✔" : "①"}</span>Connecter LinkedIn</div>
+    <div class="step ${s2}"><span class="n">${hasPosts ? "✔" : "②"}</span>Publier un post</div>
+    <div class="step ${s3}"><span class="n">③</span>Suivre l'engagement</div>
+  </div>`;
+}
+
+// Graphique d'engagement (SVG inline, zéro dépendance JS) : barres groupées
+// réactions/commentaires par post-exemple. Données illustratives, jamais API.
+function engagementChart(examples) {
+  if (!examples.length) return `<div class="empty">Aucune donnée d'engagement à afficher.</div>`;
+  const W = 340, H = 150, padL = 10, padR = 10, padT = 8, padB = 26;
+  const plotH = H - padT - padB;
+  const max = Math.max(1, ...examples.flatMap((p) => [p.reactions, p.comments]));
+  const groupW = (W - padL - padR) / examples.length;
+  const barW = Math.min(24, groupW / 3);
+  const yTop = (v) => padT + plotH - (v / max) * plotH;
+  const bars = examples
+    .map((p, i) => {
+      const cx = padL + groupW * i + groupW / 2;
+      const hR = (p.reactions / max) * plotH;
+      const hC = (p.comments / max) * plotH;
+      return `<rect x="${(cx - barW - 2).toFixed(1)}" y="${yTop(p.reactions).toFixed(1)}" width="${barW}" height="${hR.toFixed(1)}" rx="3" fill="#634670"/>
+        <rect x="${(cx + 2).toFixed(1)}" y="${yTop(p.comments).toFixed(1)}" width="${barW}" height="${hC.toFixed(1)}" rx="3" fill="#0a66c2"/>
+        <text x="${cx.toFixed(1)}" y="${H - 8}" fill="#F2F2F2" opacity="0.5" font-size="10" text-anchor="middle">${esc((p.date || "").slice(5))}</text>`;
+    })
+    .join("");
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Engagement par post">
+      <line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#444" stroke-width="1"/>
+      ${bars}
+    </svg>
+    <div class="legend"><span><i style="background:#634670"></i>Réactions</span><span><i style="background:#0a66c2"></i>Commentaires</span><span class="muted">exemples illustratifs</span></div>`;
+}
+
+// Tuiles KPI. Engagement agrégé sur les exemples (illustratif) — l'engagement
+// réel des posts publiés se lit par post via l'API (colonne du tableau).
+function kpiTiles(realPosts, examples) {
+  const total = realPosts.length + examples.length;
+  const reactions = examples.reduce((a, p) => a + p.reactions, 0);
+  const comments = examples.reduce((a, p) => a + p.comments, 0);
+  return `<div class="kpis">
+      <div class="kpi"><b>${total}</b><span>Publications</span></div>
+      <div class="kpi"><b>${reactions}</b><span>Réactions*</span></div>
+      <div class="kpi"><b>${comments}</b><span>Commentaires*</span></div>
+    </div>
+    <p class="muted" style="margin-top:8px">* Agrégés sur les exemples illustratifs. L'engagement réel des posts publiés se lit par post via l'API (« voir l'engagement »).</p>`;
 }
 
 function safeEqual(a, b) {
@@ -106,7 +161,7 @@ function getSession(req, res) {
   let sid = parseCookies(req).demo_sid;
   if (!sid || !sessions.has(sid)) {
     sid = rid("sid");
-    sessions.set(sid, { authed: false, csrf: rid("csrf"), linkedin: null, oauthState: null });
+    sessions.set(sid, { authed: false, csrf: rid("csrf"), linkedin: null, oauthState: null, examplesHidden: false });
     res.setHeader("Set-Cookie", `demo_sid=${sid}; HttpOnly; Path=/; SameSite=Lax${secure ? "; Secure" : ""}`);
   }
   return sessions.get(sid);
@@ -136,6 +191,24 @@ function page(title, bodyHtml) {
     color:#fff;text-decoration:none;font-weight:600}
   .ok{color:#7DBE8A} .warn{color:#D8A24A} .muted{opacity:.6;font-size:13px}
   .chk{display:flex;align-items:center;gap:8px;margin-top:12px} .chk input{width:auto}
+  .bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;background:#2A2A2A;white-space:nowrap}
+  .pill.on{color:#7DBE8A} .pill.off{color:#D8A24A}
+  .stepper{display:flex;gap:8px;margin:14px 0 4px}
+  .step{flex:1;background:#2A2A2A;border-radius:10px;padding:12px 8px;text-align:center;font-size:12px;opacity:.45}
+  .step.active{opacity:1;outline:2px solid #634670} .step.done{opacity:1;color:#7DBE8A}
+  .step .n{display:block;font-size:18px;font-weight:800;margin-bottom:3px}
+  .kpis{display:flex;gap:12px;margin-top:14px}
+  .kpi{flex:1;background:#2A2A2A;border-radius:10px;padding:14px 8px;text-align:center}
+  .kpi b{display:block;font-size:26px;font-weight:800;line-height:1.1}
+  .kpi span{font-size:11px;opacity:.6;text-transform:uppercase;letter-spacing:.03em}
+  .chart{width:100%;height:auto;display:block;margin-top:4px}
+  .legend{display:flex;gap:16px;font-size:12px;opacity:.75;margin-top:6px;flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  .empty{background:#2A2A2A;border:1px dashed #444;border-radius:10px;padding:26px;text-align:center;font-size:14px;opacity:.85}
+  .banner{background:#1f3a28;color:#cdeccf;border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:14px;line-height:1.5}
+  details.composer summary{cursor:pointer;list-style:none;font-weight:600;color:#0a66c2;padding:6px 0}
+  details.composer summary::-webkit-details-marker{display:none}
 </style></head><body><div class="wrap">${bodyHtml}</div></body></html>`;
 }
 
@@ -185,48 +258,69 @@ export function demoRouter() {
     res.redirect("/demo");
   });
 
-  // Tableau de bord : statut LinkedIn + rédaction + suivi des publications.
+  // Tableau de bord : onboarding + engagement (graphique) + publier + suivi + RGPD.
   r.get("/demo/app", async (req, res) => {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
     const li = s.linkedin;
     const connected = Boolean(li);
     const realPosts = await listDemoPosts();
+    const examples = s.examplesHidden ? [] : DEMO_SAMPLE_POSTS;
+    const hasPosts = realPosts.length > 0;
+    const totalRows = realPosts.length + examples.length;
+    const wiped = req.query.wiped === "1";
+    // Composer déplié par défaut quand connecté sans post : on guide l'action.
+    const composerOpen = connected && !hasPosts ? "open" : "";
     res.send(
       page(
         "Démo — tableau de bord",
-        `<div class="card">
-          <h1>Espace de démonstration</h1>
-          <p class="muted">Connecté (compte de test). <a href="/demo/logout" style="color:#8ab">Se déconnecter</a></p>
-          <h2>1. Compte LinkedIn</h2>
-          ${connected
-            ? `<p class="ok">✔ Connecté : ${esc(li.name || li.urn)}</p>`
-            : `<p>Pas encore connecté.</p><a class="btn" href="/demo/linkedin/start">Connecter LinkedIn</a>`}
-        </div>
+        `${wiped ? `<div class="banner">✔ Toutes tes données ont été supprimées : connexion LinkedIn, historique des posts publiés, et les exemples retirés de l'affichage. Droit à l'effacement (RGPD art. 17) exercé. &nbsp;<a href="/demo/examples/restore" style="color:#8ab">Réafficher les exemples</a></div>` : ""}
         <div class="card">
-          <h2>2. Rédige, approuve, publie</h2>
+          <div class="bar">
+            <h1 style="margin:0">Cockpit contenu LinkedIn</h1>
+            <span class="pill ${connected ? "on" : "off"}">${connected ? `● ${esc(li.name || "connecté")}` : "○ Non connecté"}</span>
+          </div>
+          <p class="muted" style="margin:2px 0 0">Compte de démonstration. <a href="/demo/logout" style="color:#8ab">Se déconnecter</a></p>
+          ${stepper(connected, hasPosts)}
+          ${connected ? "" : `<a class="btn" href="/demo/linkedin/start">Connecter LinkedIn</a>`}
+        </div>
+
+        <div class="card">
+          <h2>Engagement</h2>
+          ${engagementChart(examples)}
+          ${kpiTiles(realPosts, examples)}
+        </div>
+
+        <div class="card">
+          <h2>Publier</h2>
           <p class="muted">Rien n'est publié sans ton clic « Approuver et publier ». Human-in-the-loop.</p>
-          <form method="post" action="/demo/publish">
-            <input type="hidden" name="csrf" value="${s.csrf}">
-            <label>Texte du post LinkedIn</label>
-            <textarea name="caption" placeholder="Ton post..."></textarea>
-            <label>Titre du visuel on-brand (optionnel — génère une image)</label>
-            <input name="visualTitle" placeholder="Laisse vide pour un post texte seul">
-            <button type="submit" ${connected ? "" : "disabled"}>Approuver et publier${connected ? "" : " (connecte LinkedIn d'abord)"}</button>
-          </form>
+          <details class="composer" ${composerOpen}>
+            <summary>✍️ Rédiger un nouveau post</summary>
+            <form method="post" action="/demo/publish">
+              <input type="hidden" name="csrf" value="${s.csrf}">
+              <label>Texte du post LinkedIn</label>
+              <textarea name="caption" placeholder="Ton post..."></textarea>
+              <label>Titre du visuel on-brand (optionnel — génère une image)</label>
+              <input name="visualTitle" placeholder="Laisse vide pour un post texte seul">
+              <button type="submit" ${connected ? "" : "disabled"}>Approuver et publier${connected ? "" : " (connecte LinkedIn d'abord)"}</button>
+            </form>
+          </details>
         </div>
+
         <div class="card">
-          <h2>3. Publications &amp; suivi de l'engagement</h2>
-          <p class="muted">Historique des posts publiés via la démo et leur engagement (réactions,
-          commentaires, impressions), lu via l'API — capability « monitor engagement » de la
-          Community Management API. Clique une ligne « publié » pour voir l'engagement en direct.</p>
-          ${publicationsTable(realPosts)}
+          <h2>Publications &amp; suivi</h2>
+          <p class="muted">Historique des posts publiés et leur engagement, lu via l'API — capability
+          « monitor engagement » de la Community Management API. Clique une ligne « publié » pour l'engagement live.</p>
+          ${totalRows
+            ? publicationsTable(realPosts, examples)
+            : `<div class="empty">Aucune publication. Publie un post ci-dessus, ou <a href="/demo/examples/restore" style="color:#8ab">réaffiche les exemples</a>.</div>`}
         </div>
+
         <div class="card">
           <h2>Confidentialité — droit à l'effacement (RGPD art. 17)</h2>
-          <p class="muted">Cette démo conserve ta connexion LinkedIn (en mémoire de session) et
-          l'historique des posts que tu publies (côté serveur). Aucune donnée n'est vendue ni
-          partagée. Le bouton ci-dessous efface les deux immédiatement et définitivement.</p>
+          <p class="muted">Cette démo conserve ta connexion LinkedIn (session) et l'historique des posts
+          publiés (serveur). Aucune donnée n'est vendue ni partagée. Le bouton efface les deux
+          immédiatement, et retire les exemples de l'affichage pour te montrer la suppression.</p>
           <form method="post" action="/demo/delete">
             <input type="hidden" name="csrf" value="${s.csrf}">
             <button type="submit" style="background:#7a2b2b">Supprimer mes données</button>
@@ -234,6 +328,15 @@ export function demoRouter() {
         </div>`
       )
     );
+  });
+
+  // Réaffiche les exemples illustratifs (après une suppression de démo) pour
+  // pouvoir continuer la démonstration / filmer. N'affecte que l'affichage.
+  r.get("/demo/examples/restore", (req, res) => {
+    const s = getSession(req, res);
+    if (!s.authed) return res.redirect("/demo");
+    s.examplesHidden = false;
+    res.redirect("/demo/app");
   });
 
   // Droit a l'effacement (RGPD art. 17) cote demo : purge la connexion LinkedIn
@@ -248,19 +351,11 @@ export function demoRouter() {
     }
     s.linkedin = null;
     s.lastPost = null;
+    s.examplesHidden = true; // retire aussi les exemples de l'affichage (preuve visuelle)
     await clearDemoPosts();
-    res.send(
-      page(
-        "Données supprimées",
-        `<div class="card"><h1 class="ok">✔ Données supprimées</h1>
-          <p>La connexion LinkedIn de ta session et l'historique des posts publiés ont été
-          effacés immédiatement et définitivement. Droit à l'effacement (RGPD art. 17) exercé.</p>
-          <p class="muted">(Les lignes « exemple » du tableau sont des illustrations statiques,
-          pas de la donnée personnelle — elles subsistent.)</p>
-          <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a></p>
-        </div>`
-      )
-    );
+    // Retour au tableau de bord vidé : le reviewer VOIT la suppression (graphique
+    // vide, KPI à zéro, tableau vide), bannière de confirmation en haut.
+    res.redirect("/demo/app?wiped=1");
   });
 
   // Démarre l'OAuth LinkedIn.
