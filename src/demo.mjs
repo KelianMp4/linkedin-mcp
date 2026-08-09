@@ -8,12 +8,82 @@
 
 import { Router } from "express";
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { render } from "./render.mjs";
-import { DEFAULT_VISUAL } from "./store.mjs";
+import { DEFAULT_VISUAL, DATA_DIR, appendPost, listPosts } from "./store.mjs";
 import { authorizeUrl, exchangeCode, getMember, publishText, publishImage, getSocialActions, isConfigured } from "./linkedin.mjs";
 
 const sessions = new Map(); // sid -> { authed, csrf, linkedin:{accessToken,urn,name}|null, oauthState }
 const rid = (p) => `${p}_${randomBytes(24).toString("base64url")}`;
+
+// Echappe le HTML (texte de post, nom LinkedIn) avant injection dans la page.
+const esc = (v) =>
+  String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// Historique des posts publiés via la démo : persisté dans data/_demo/ (volume
+// Docker persistant), en réutilisant le store par-dossier. Isolé du store client
+// (chaque client = data/<token>/) : la démo n'a pas de token, elle a son dossier.
+const DEMO_DIR = join(DATA_DIR, "_demo");
+async function demoCtx() {
+  await mkdir(DEMO_DIR, { recursive: true, mode: 0o700 });
+  return { client: "demo", dir: DEMO_DIR };
+}
+async function appendDemoPost(entry) {
+  return appendPost(await demoCtx(), entry);
+}
+async function listDemoPosts() {
+  try {
+    return await listPosts(await demoCtx());
+  } catch {
+    return [];
+  }
+}
+async function clearDemoPosts() {
+  await rm(join(DEMO_DIR, "history.json"), { force: true });
+}
+
+// Exemples ÉTIQUETÉS pour montrer à quoi ressemble le suivi une fois rempli.
+// JAMAIS présentés comme de la donnée API : badge « exemple », engagement marqué
+// illustratif. On ne trompe pas le reviewer — on illustre la structure du suivi.
+const DEMO_SAMPLE_POSTS = [
+  { date: "2026-08-04", text: "3 signaux qui montrent qu'un DSI externe vous ferait gagner 6 mois de roadmap.", reactions: 42, comments: 7 },
+  { date: "2026-08-01", text: "On a migré un client vers un stack self-hosté en 2 semaines. Le vrai coût caché n'était pas la techno.", reactions: 28, comments: 4 },
+  { date: "2026-07-28", text: "La question qu'aucun prestataire IT ne veut que vous posiez avant de signer.", reactions: 63, comments: 12 },
+];
+
+const trunc = (t, n = 64) => (t.length > n ? t.slice(0, n) + "…" : t);
+
+// Tableau « suivi des publications » : vrais posts publiés via la démo (engagement
+// lu en direct via l'API, lien par ligne) + exemples étiquetés (illustratifs).
+function publicationsTable(realPosts) {
+  const realRows = realPosts
+    .slice()
+    .reverse()
+    .map(
+      (p) => `<tr>
+        <td class="muted">${esc((p.date || "").slice(0, 10))}</td>
+        <td>${esc(trunc(p.text || ""))}</td>
+        <td><span class="tag tag-live">publié</span></td>
+        <td>${p.urn ? `<a href="/demo/stats?urn=${encodeURIComponent(p.urn)}" style="color:#8ab">voir l'engagement</a>` : '<span class="muted">—</span>'}</td>
+      </tr>`
+    )
+    .join("");
+  const sampleRows = DEMO_SAMPLE_POSTS.map(
+    (p) => `<tr>
+      <td class="muted">${esc(p.date)}</td>
+      <td>${esc(trunc(p.text))}</td>
+      <td><span class="tag tag-ex">exemple</span></td>
+      <td class="muted">${p.reactions} · ${p.comments} <span class="muted">(illustratif)</span></td>
+    </tr>`
+  ).join("");
+  return `<table class="pub">
+      <thead><tr><th>Date</th><th>Post</th><th>Type</th><th>Engagement</th></tr></thead>
+      <tbody>${realRows}${sampleRows}</tbody>
+    </table>
+    <p class="muted" style="margin-top:10px">Lignes <b>publié</b> : vrais posts de cette démo, engagement lu
+    en direct via l'API LinkedIn. Lignes <b>exemple</b> : illustration du suivi — chiffres NON issus de l'API.</p>`;
+}
 
 function safeEqual(a, b) {
   const ba = Buffer.from(String(a || ""));
@@ -48,8 +118,13 @@ function page(title, bodyHtml) {
 <style>
   body{font-family:system-ui,sans-serif;background:#1A1A1A;color:#F2F2F2;margin:0;
     display:flex;justify-content:center;padding:40px 16px}
-  .wrap{max-width:560px;width:100%}
+  .wrap{max-width:680px;width:100%}
   .card{background:#232323;border-radius:14px;padding:28px;margin-bottom:16px}
+  table.pub{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  table.pub th,table.pub td{text-align:left;padding:8px 10px;border-bottom:1px solid #333;vertical-align:top}
+  table.pub th{opacity:.55;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+  .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
+  .tag-ex{background:#3a3320;color:#D8A24A} .tag-live{background:#1f3a28;color:#7DBE8A}
   h1{font-size:22px;margin:0 0 6px} h2{font-size:16px;margin:0 0 12px;opacity:.9}
   p{opacity:.8;font-size:14px;line-height:1.5} label{display:block;font-size:13px;margin:14px 0 6px;opacity:.85}
   input,textarea{width:100%;box-sizing:border-box;padding:11px;border-radius:8px;border:1px solid #444;
@@ -110,21 +185,22 @@ export function demoRouter() {
     res.redirect("/demo");
   });
 
-  // Tableau de bord : statut LinkedIn + rédaction.
-  r.get("/demo/app", (req, res) => {
+  // Tableau de bord : statut LinkedIn + rédaction + suivi des publications.
+  r.get("/demo/app", async (req, res) => {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
     const li = s.linkedin;
     const connected = Boolean(li);
+    const realPosts = await listDemoPosts();
     res.send(
       page(
-        "Démo — rédiger",
+        "Démo — tableau de bord",
         `<div class="card">
           <h1>Espace de démonstration</h1>
           <p class="muted">Connecté (compte de test). <a href="/demo/logout" style="color:#8ab">Se déconnecter</a></p>
           <h2>1. Compte LinkedIn</h2>
           ${connected
-            ? `<p class="ok">✔ Connecté : ${li.name || li.urn}</p>`
+            ? `<p class="ok">✔ Connecté : ${esc(li.name || li.urn)}</p>`
             : `<p>Pas encore connecté.</p><a class="btn" href="/demo/linkedin/start">Connecter LinkedIn</a>`}
         </div>
         <div class="card">
@@ -140,17 +216,17 @@ export function demoRouter() {
           </form>
         </div>
         <div class="card">
-          <h2>3. Suivi de l'engagement (analytics)</h2>
-          <p class="muted">Lecture des réactions / commentaires / impressions d'un post via l'API
-          — capability « monitor engagement » de la Community Management API. Après publication,
-          les chiffres du post s'affichent ici ; sans post, cette page décrit où l'analytics se branche.</p>
-          <a class="btn" href="/demo/stats">Voir la page analytics</a>
+          <h2>3. Publications &amp; suivi de l'engagement</h2>
+          <p class="muted">Historique des posts publiés via la démo et leur engagement (réactions,
+          commentaires, impressions), lu via l'API — capability « monitor engagement » de la
+          Community Management API. Clique une ligne « publié » pour voir l'engagement en direct.</p>
+          ${publicationsTable(realPosts)}
         </div>
         <div class="card">
           <h2>Confidentialité — droit à l'effacement (RGPD art. 17)</h2>
-          <p class="muted">Cet espace ne conserve que la connexion LinkedIn de ta session
-          (jeton d'accès, nom, identifiant), en mémoire, le temps de la démo. Aucune donnée
-          n'est vendue ni partagée. Tu peux tout effacer à tout moment, immédiatement.</p>
+          <p class="muted">Cette démo conserve ta connexion LinkedIn (en mémoire de session) et
+          l'historique des posts que tu publies (côté serveur). Aucune donnée n'est vendue ni
+          partagée. Le bouton ci-dessous efface les deux immédiatement et définitivement.</p>
           <form method="post" action="/demo/delete">
             <input type="hidden" name="csrf" value="${s.csrf}">
             <button type="submit" style="background:#7a2b2b">Supprimer mes données</button>
@@ -161,9 +237,10 @@ export function demoRouter() {
   });
 
   // Droit a l'effacement (RGPD art. 17) cote demo : purge la connexion LinkedIn
-  // de la session (jeton d'acces, urn, nom) + le dernier post memorise. Rien
-  // n'est stocke sur disque par la demo, donc effacer la session suffit.
-  r.post("/demo/delete", (req, res) => {
+  // de la session (jeton d'acces, urn, nom) ET l'historique des posts persiste
+  // sur disque (data/_demo/history.json). Les exemples etiquetes, eux, sont des
+  // constantes de code (pas de la donnee personnelle) et restent.
+  r.post("/demo/delete", async (req, res) => {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
     if (!safeEqual((req.body || {}).csrf, s.csrf)) {
@@ -171,12 +248,15 @@ export function demoRouter() {
     }
     s.linkedin = null;
     s.lastPost = null;
+    await clearDemoPosts();
     res.send(
       page(
         "Données supprimées",
         `<div class="card"><h1 class="ok">✔ Données supprimées</h1>
-          <p>La connexion LinkedIn et les informations de cette session ont été
-          effacées immédiatement et définitivement. Droit à l'effacement (RGPD art. 17) exercé.</p>
+          <p>La connexion LinkedIn de ta session et l'historique des posts publiés ont été
+          effacés immédiatement et définitivement. Droit à l'effacement (RGPD art. 17) exercé.</p>
+          <p class="muted">(Les lignes « exemple » du tableau sont des illustrations statiques,
+          pas de la donnée personnelle — elles subsistent.)</p>
           <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a></p>
         </div>`
       )
@@ -233,19 +313,22 @@ export function demoRouter() {
       } else {
         result = await publishText(s.linkedin.accessToken, s.linkedin.urn, caption);
       }
-      s.lastPost = { urn: result.id, url: result.url };
+      s.lastPost = { urn: result.id, url: result.url, text: caption };
+      // Persiste dans l'historique de suivi (data/_demo/) — apparait dans le
+      // tableau « Publications » du tableau de bord.
+      await appendDemoPost({ date: new Date().toISOString().slice(0, 10), text: caption, url: result.url, urn: result.id });
       res.send(
         page(
           "Publié",
           `<div class="card"><h1 class="ok">✔ Publié sur LinkedIn</h1>
-            <p>Le post a été publié sur le profil connecté.</p>
+            <p>Le post a été publié sur le profil connecté et ajouté au suivi des publications.</p>
             ${result.url ? `<a class="btn" href="${result.url}" target="_blank" rel="noopener">Voir le post</a>` : '<p class="muted">(Post créé — id retourné par LinkedIn.)</p>'}
           </div>
           <div class="card">
-            <h2>3. Suivi de l'engagement (analytics)</h2>
+            <h2>Suivi de l'engagement (analytics)</h2>
             <p class="muted">Lecture des réactions/commentaires du post via l'API (capability « monitor engagement »).</p>
-            <a class="btn" href="/demo/stats">Voir les statistiques du post</a>
-            <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Rédiger un autre post</a></p>
+            <a class="btn" href="/demo/stats?urn=${encodeURIComponent(result.id)}">Voir l'engagement du post</a>
+            <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour au tableau de bord</a></p>
           </div>`
         )
       );
@@ -254,20 +337,30 @@ export function demoRouter() {
     }
   });
 
-  // Stats du dernier post publié : tente de lire le vrai engagement. Si l'API
-  // refuse (tier), affiche un état "en attente d'accès" — JAMAIS de faux chiffres.
+  // Engagement d'un post : ?urn=<post> (depuis le tableau de suivi), sinon le
+  // dernier post publié. Lit le vrai engagement via l'API ; si l'API refuse
+  // (tier pas encore accordé), affiche "en attente" — JAMAIS de faux chiffres.
   r.get("/demo/stats", async (req, res) => {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
-    // Pas encore de post publié : on montre QUAND MEME la page analytics, pour que
-    // le reviewer voie l'emplacement et la capability « monitor engagement ». Aucun
-    // chiffre inventé — juste la description de ce qui se branchera ici.
-    if (!s.lastPost) {
+    const wantUrn = String(req.query.urn || "");
+    const history = await listDemoPosts();
+    let post = null;
+    if (wantUrn) {
+      post =
+        history.find((p) => p.urn === wantUrn) ||
+        (s.lastPost && s.lastPost.urn === wantUrn ? s.lastPost : null);
+    } else {
+      post = s.lastPost || history[history.length - 1] || null;
+    }
+    // Aucun post : on montre QUAND MEME la page, pour que le reviewer voie
+    // l'emplacement et la capability « monitor engagement ». Aucun chiffre inventé.
+    if (!post) {
       return res.send(
         page(
           "Analytics",
           `<div class="card"><h1>Suivi de l'engagement (analytics)</h1>
-            <p class="warn">⏳ Aucun post publié dans cette session</p>
+            <p class="warn">⏳ Aucun post publié pour le moment</p>
             <p>Cette page lit l'engagement d'un post publié — réactions, commentaires,
             impressions — via l'API LinkedIn, au titre de la capability « monitor engagement »
             de la Community Management API.</p>
@@ -279,9 +372,21 @@ export function demoRouter() {
         )
       );
     }
-    const back = `<p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a>${s.lastPost.url ? ` · <a href="${s.lastPost.url}" target="_blank" rel="noopener" style="color:#8ab">Voir le post</a>` : ""}</p>`;
+    const back = `<p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a>${post.url ? ` · <a href="${esc(post.url)}" target="_blank" rel="noopener" style="color:#8ab">Voir le post</a>` : ""}</p>`;
+    // Il faut un LinkedIn connecté pour lire l'engagement live du post.
+    if (!s.linkedin) {
+      return res.send(
+        page(
+          "Analytics",
+          `<div class="card"><h1>Engagement du post</h1>
+            <p class="warn">Connecte LinkedIn pour lire l'engagement de ce post en direct via l'API.</p>
+            <a class="btn" href="/demo/linkedin/start">Connecter LinkedIn</a>${back}
+          </div>`
+        )
+      );
+    }
     try {
-      const stats = await getSocialActions(s.linkedin.accessToken, s.lastPost.urn);
+      const stats = await getSocialActions(s.linkedin.accessToken, post.urn);
       res.send(
         page(
           "Stats",
