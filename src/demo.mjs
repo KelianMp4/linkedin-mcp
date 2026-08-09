@@ -167,9 +167,13 @@ function getSession(req, res) {
   return sessions.get(sid);
 }
 
+// Favicon on-brand (mini bar chart violet/bleu) — SVG inline, servi par route.
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#634670"/><rect x="8" y="17" width="4" height="7" rx="1" fill="#fff"/><rect x="14" y="12" width="4" height="12" rx="1" fill="#fff"/><rect x="20" y="8" width="4" height="16" rx="1" fill="#0a66c2"/></svg>`;
+
 function page(title, bodyHtml) {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   body{font-family:system-ui,sans-serif;background:#1A1A1A;color:#F2F2F2;margin:0;
     display:flex;justify-content:center;padding:40px 16px}
@@ -214,6 +218,14 @@ function page(title, bodyHtml) {
 
 export function demoRouter() {
   const r = Router();
+
+  // Favicon (sert /favicon.svg et /favicon.ico) — évite le 404 et l'icône moche.
+  r.get(["/favicon.svg", "/favicon.ico"], (_req, res) => {
+    res
+      .set("Content-Type", "image/svg+xml")
+      .set("Cache-Control", "public, max-age=86400")
+      .send(FAVICON_SVG);
+  });
 
   // Accueil : login ou redirection vers l'app.
   r.get("/demo", (req, res) => {
