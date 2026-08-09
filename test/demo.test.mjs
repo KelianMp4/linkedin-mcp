@@ -23,7 +23,7 @@ test("GET /demo rend la page de login avec un champ CSRF", async () => {
     const res = await fetch(`http://localhost:${port}/demo`);
     const html = await res.text();
     assert.equal(res.status, 200);
-    assert.match(html, /Se connecter/);
+    assert.match(html, /Sign in/);
     assert.match(html, /name="csrf"/);
     assert.match(html, /name="user"/);
   } finally {

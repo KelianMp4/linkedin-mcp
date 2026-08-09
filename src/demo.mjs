@@ -1,7 +1,7 @@
 // Surface web de démo pour la review LinkedIn (Community Management API).
-// Objectif : un reviewer se logge (compte de test), connecte SON LinkedIn,
-// rédige un post, l'APPROUVE explicitement, et on le publie. Human-in-the-loop,
-// rien d'automatique. Moche assumé — c'est une démo de review, pas le produit.
+// UI en ANGLAIS : le reviewer LinkedIn est anglophone et teste la démo live.
+// Le reviewer se logge (compte de test), connecte SON LinkedIn, rédige un post,
+// l'APPROUVE explicitement, et on le publie. Human-in-the-loop, rien d'automatique.
 //
 // Auth démo = simple porte (DEMO_USER/DEMO_PASS) distincte de l'auth MCP.
 // Session en mémoire + cookie sid. CSRF sur les POST.
@@ -44,12 +44,12 @@ async function clearDemoPosts() {
 }
 
 // Exemples ÉTIQUETÉS pour montrer à quoi ressemble le suivi une fois rempli.
-// JAMAIS présentés comme de la donnée API : badge « exemple », engagement marqué
+// JAMAIS présentés comme de la donnée API : badge « example », engagement marqué
 // illustratif. On ne trompe pas le reviewer — on illustre la structure du suivi.
 const DEMO_SAMPLE_POSTS = [
-  { date: "2026-08-04", text: "3 signaux qui montrent qu'un DSI externe vous ferait gagner 6 mois de roadmap.", reactions: 42, comments: 7 },
-  { date: "2026-08-01", text: "On a migré un client vers un stack self-hosté en 2 semaines. Le vrai coût caché n'était pas la techno.", reactions: 28, comments: 4 },
-  { date: "2026-07-28", text: "La question qu'aucun prestataire IT ne veut que vous posiez avant de signer.", reactions: 63, comments: 12 },
+  { date: "2026-08-04", text: "3 signals that a fractional CTO would save you 6 months of roadmap.", reactions: 42, comments: 7 },
+  { date: "2026-08-01", text: "We moved a client to a self-hosted stack in 2 weeks. The real hidden cost wasn't the tech.", reactions: 28, comments: 4 },
+  { date: "2026-07-28", text: "The question no IT vendor wants you to ask before you sign.", reactions: 63, comments: 12 },
 ];
 
 const trunc = (t, n = 64) => (t.length > n ? t.slice(0, n) + "…" : t);
@@ -64,8 +64,8 @@ function publicationsTable(realPosts, examples) {
       (p) => `<tr>
         <td class="muted">${esc((p.date || "").slice(0, 10))}</td>
         <td>${esc(trunc(p.text || ""))}</td>
-        <td><span class="tag tag-live">publié</span></td>
-        <td>${p.urn ? `<a href="/demo/stats?urn=${encodeURIComponent(p.urn)}" style="color:#8ab">voir l'engagement</a>` : '<span class="muted">—</span>'}</td>
+        <td><span class="tag tag-live">published</span></td>
+        <td>${p.urn ? `<a href="/demo/stats?urn=${encodeURIComponent(p.urn)}" style="color:#8ab">view engagement</a>` : '<span class="muted">—</span>'}</td>
       </tr>`
     )
     .join("");
@@ -74,8 +74,8 @@ function publicationsTable(realPosts, examples) {
       (p) => `<tr>
       <td class="muted">${esc(p.date)}</td>
       <td>${esc(trunc(p.text))}</td>
-      <td><span class="tag tag-ex">exemple</span></td>
-      <td class="muted">${p.reactions} · ${p.comments} <span class="muted">(illustratif)</span></td>
+      <td><span class="tag tag-ex">example</span></td>
+      <td class="muted">${p.reactions} · ${p.comments} <span class="muted">(illustrative)</span></td>
     </tr>`
     )
     .join("");
@@ -83,26 +83,26 @@ function publicationsTable(realPosts, examples) {
       <thead><tr><th>Date</th><th>Post</th><th>Type</th><th>Engagement</th></tr></thead>
       <tbody>${realRows}${sampleRows}</tbody>
     </table>
-    <p class="muted" style="margin-top:10px">Lignes <b>publié</b> : vrais posts de cette démo, engagement lu
-    en direct via l'API LinkedIn. Lignes <b>exemple</b> : illustration du suivi — chiffres NON issus de l'API.</p>`;
+    <p class="muted" style="margin-top:10px"><b>published</b> rows: real posts from this demo, engagement read
+    live via the LinkedIn API. <b>example</b> rows: tracking illustration — numbers NOT from the API.</p>`;
 }
 
-// Ruban d'onboarding : où en est l'utilisateur (connecter → publier → suivre).
+// Ruban d'onboarding : où en est l'utilisateur (connect → publish → track).
 function stepper(connected, hasPosts) {
   const s1 = connected ? "done" : "active";
   const s2 = hasPosts ? "done" : connected ? "active" : "";
   const s3 = hasPosts ? "active" : "";
   return `<div class="stepper">
-    <div class="step ${s1}"><span class="n">${connected ? "✔" : "①"}</span>Connecter LinkedIn</div>
-    <div class="step ${s2}"><span class="n">${hasPosts ? "✔" : "②"}</span>Publier un post</div>
-    <div class="step ${s3}"><span class="n">③</span>Suivre l'engagement</div>
+    <div class="step ${s1}"><span class="n">${connected ? "✔" : "①"}</span>Connect LinkedIn</div>
+    <div class="step ${s2}"><span class="n">${hasPosts ? "✔" : "②"}</span>Publish a post</div>
+    <div class="step ${s3}"><span class="n">③</span>Track engagement</div>
   </div>`;
 }
 
 // Graphique d'engagement (SVG inline, zéro dépendance JS) : barres groupées
 // réactions/commentaires par post-exemple. Données illustratives, jamais API.
 function engagementChart(examples) {
-  if (!examples.length) return `<div class="empty">Aucune donnée d'engagement à afficher.</div>`;
+  if (!examples.length) return `<div class="empty">No engagement data to display.</div>`;
   const W = 340, H = 150, padL = 10, padR = 10, padT = 8, padB = 26;
   const plotH = H - padT - padB;
   const max = Math.max(1, ...examples.flatMap((p) => [p.reactions, p.comments]));
@@ -119,11 +119,11 @@ function engagementChart(examples) {
         <text x="${cx.toFixed(1)}" y="${H - 8}" fill="#F2F2F2" opacity="0.5" font-size="10" text-anchor="middle">${esc((p.date || "").slice(5))}</text>`;
     })
     .join("");
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Engagement par post">
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Engagement per post">
       <line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#444" stroke-width="1"/>
       ${bars}
     </svg>
-    <div class="legend"><span><i style="background:#634670"></i>Réactions</span><span><i style="background:#0a66c2"></i>Commentaires</span><span class="muted">exemples illustratifs</span></div>`;
+    <div class="legend"><span><i style="background:#634670"></i>Reactions</span><span><i style="background:#0a66c2"></i>Comments</span><span class="muted">illustrative examples</span></div>`;
 }
 
 // Tuiles KPI. Engagement agrégé sur les exemples (illustratif) — l'engagement
@@ -133,11 +133,11 @@ function kpiTiles(realPosts, examples) {
   const reactions = examples.reduce((a, p) => a + p.reactions, 0);
   const comments = examples.reduce((a, p) => a + p.comments, 0);
   return `<div class="kpis">
-      <div class="kpi"><b>${total}</b><span>Publications</span></div>
-      <div class="kpi"><b>${reactions}</b><span>Réactions*</span></div>
-      <div class="kpi"><b>${comments}</b><span>Commentaires*</span></div>
+      <div class="kpi"><b>${total}</b><span>Posts</span></div>
+      <div class="kpi"><b>${reactions}</b><span>Reactions*</span></div>
+      <div class="kpi"><b>${comments}</b><span>Comments*</span></div>
     </div>
-    <p class="muted" style="margin-top:8px">* Agrégés sur les exemples illustratifs. L'engagement réel des posts publiés se lit par post via l'API (« voir l'engagement »).</p>`;
+    <p class="muted" style="margin-top:8px">* Aggregated over the illustrative examples. Real engagement of published posts is read per post via the API ("view engagement").</p>`;
 }
 
 function safeEqual(a, b) {
@@ -171,7 +171,7 @@ function getSession(req, res) {
 const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#634670"/><rect x="8" y="17" width="4" height="7" rx="1" fill="#fff"/><rect x="14" y="12" width="4" height="12" rx="1" fill="#fff"/><rect x="20" y="8" width="4" height="16" rx="1" fill="#0a66c2"/></svg>`;
 
 function page(title, bodyHtml) {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
@@ -234,16 +234,16 @@ export function demoRouter() {
     const configured = isConfigured();
     res.send(
       page(
-        "Démo linkedin-mcp",
+        "linkedin-mcp demo",
         `<div class="card">
-          <h1>linkedin-mcp — démo</h1>
-          <p>Espace de démonstration : connecte un compte LinkedIn, rédige un post on-brand, approuve-le, publie.</p>
-          ${configured ? "" : '<p class="warn">⚠️ LinkedIn non configuré (LINKEDIN_CLIENT_ID/SECRET manquants). Le login marche, la publication échouera tant que ce n\'est pas posé.</p>'}
+          <h1>linkedin-mcp — demo</h1>
+          <p>Demo workspace: connect a LinkedIn account, write an on-brand post, approve it, publish.</p>
+          ${configured ? "" : '<p class="warn">⚠️ LinkedIn not configured (LINKEDIN_CLIENT_ID/SECRET missing). Sign-in works, publishing will fail until it is set.</p>'}
           <form method="post" action="/demo/login">
             <input type="hidden" name="csrf" value="${s.csrf}">
-            <label>Identifiant</label><input name="user" autocomplete="username">
-            <label>Mot de passe</label><input name="pass" type="password" autocomplete="current-password">
-            <button type="submit">Se connecter</button>
+            <label>Username</label><input name="user" autocomplete="username">
+            <label>Password</label><input name="pass" type="password" autocomplete="current-password">
+            <button type="submit">Sign in</button>
           </form>
         </div>`
       )
@@ -253,14 +253,14 @@ export function demoRouter() {
   r.post("/demo/login", (req, res) => {
     const s = getSession(req, res);
     const { user, pass, csrf } = req.body || {};
-    if (!safeEqual(csrf, s.csrf)) return res.status(403).send(page("Erreur", '<div class="card"><p class="warn">Jeton de sécurité invalide. <a href="/demo">Réessayer</a></p></div>'));
+    if (!safeEqual(csrf, s.csrf)) return res.status(403).send(page("Error", '<div class="card"><p class="warn">Invalid security token. <a href="/demo">Try again</a></p></div>'));
     const U = process.env.DEMO_USER, P = process.env.DEMO_PASS;
-    if (!U || !P) return res.status(500).send(page("Config", '<div class="card"><p class="warn">DEMO_USER / DEMO_PASS non configurés côté serveur.</p></div>'));
+    if (!U || !P) return res.status(500).send(page("Config", '<div class="card"><p class="warn">DEMO_USER / DEMO_PASS not configured on the server.</p></div>'));
     if (safeEqual(user, U) && safeEqual(pass, P)) {
       s.authed = true;
       return res.redirect("/demo/app");
     }
-    res.status(401).send(page("Refusé", '<div class="card"><p class="warn">Identifiants invalides. <a href="/demo">Réessayer</a></p></div>'));
+    res.status(401).send(page("Denied", '<div class="card"><p class="warn">Invalid credentials. <a href="/demo">Try again</a></p></div>'));
   });
 
   r.get("/demo/logout", (req, res) => {
@@ -285,16 +285,16 @@ export function demoRouter() {
     const composerOpen = connected && !hasPosts ? "open" : "";
     res.send(
       page(
-        "Démo — tableau de bord",
-        `${wiped ? `<div class="banner">✔ Toutes tes données ont été supprimées : connexion LinkedIn, historique des posts publiés, et les exemples retirés de l'affichage. Droit à l'effacement (RGPD art. 17) exercé. &nbsp;<a href="/demo/examples/restore" style="color:#8ab">Réafficher les exemples</a></div>` : ""}
+        "Demo — dashboard",
+        `${wiped ? `<div class="banner">✔ All your data has been deleted: LinkedIn connection, published-post history, and the examples removed from view. Right to erasure (GDPR art. 17) exercised. &nbsp;<a href="/demo/examples/restore" style="color:#8ab">Show examples again</a></div>` : ""}
         <div class="card">
           <div class="bar">
-            <h1 style="margin:0">Cockpit contenu LinkedIn</h1>
-            <span class="pill ${connected ? "on" : "off"}">${connected ? `● ${esc(li.name || "connecté")}` : "○ Non connecté"}</span>
+            <h1 style="margin:0">LinkedIn content cockpit</h1>
+            <span class="pill ${connected ? "on" : "off"}">${connected ? `● ${esc(li.name || "connected")}` : "○ Not connected"}</span>
           </div>
-          <p class="muted" style="margin:2px 0 0">Compte de démonstration. <a href="/demo/logout" style="color:#8ab">Se déconnecter</a></p>
+          <p class="muted" style="margin:2px 0 0">Demo account. <a href="/demo/logout" style="color:#8ab">Sign out</a></p>
           ${stepper(connected, hasPosts)}
-          ${connected ? "" : `<a class="btn" href="/demo/linkedin/start">Connecter LinkedIn</a>`}
+          ${connected ? "" : `<a class="btn" href="/demo/linkedin/start">Connect LinkedIn</a>`}
         </div>
 
         <div class="card">
@@ -304,38 +304,38 @@ export function demoRouter() {
         </div>
 
         <div class="card">
-          <h2>Publier</h2>
-          <p class="muted">Rien n'est publié sans ton clic « Approuver et publier ». Human-in-the-loop.</p>
+          <h2>Publish</h2>
+          <p class="muted">Nothing is published without your "Approve &amp; publish" click. Human-in-the-loop.</p>
           <details class="composer" ${composerOpen}>
-            <summary>✍️ Rédiger un nouveau post</summary>
+            <summary>✍️ Write a new post</summary>
             <form method="post" action="/demo/publish">
               <input type="hidden" name="csrf" value="${s.csrf}">
-              <label>Texte du post LinkedIn</label>
-              <textarea name="caption" placeholder="Ton post..."></textarea>
-              <label>Titre du visuel on-brand (optionnel — génère une image)</label>
-              <input name="visualTitle" placeholder="Laisse vide pour un post texte seul">
-              <button type="submit" ${connected ? "" : "disabled"}>Approuver et publier${connected ? "" : " (connecte LinkedIn d'abord)"}</button>
+              <label>LinkedIn post text</label>
+              <textarea name="caption" placeholder="Your post..."></textarea>
+              <label>On-brand visual title (optional — generates an image)</label>
+              <input name="visualTitle" placeholder="Leave empty for a text-only post">
+              <button type="submit" ${connected ? "" : "disabled"}>Approve &amp; publish${connected ? "" : " (connect LinkedIn first)"}</button>
             </form>
           </details>
         </div>
 
         <div class="card">
-          <h2>Publications &amp; suivi</h2>
-          <p class="muted">Historique des posts publiés et leur engagement, lu via l'API — capability
-          « monitor engagement » de la Community Management API. Clique une ligne « publié » pour l'engagement live.</p>
+          <h2>Publications &amp; tracking</h2>
+          <p class="muted">History of published posts and their engagement, read via the API — the
+          "monitor engagement" capability of the Community Management API. Click a "published" row for live engagement.</p>
           ${totalRows
             ? publicationsTable(realPosts, examples)
-            : `<div class="empty">Aucune publication. Publie un post ci-dessus, ou <a href="/demo/examples/restore" style="color:#8ab">réaffiche les exemples</a>.</div>`}
+            : `<div class="empty">No publications yet. Publish a post above, or <a href="/demo/examples/restore" style="color:#8ab">show the examples again</a>.</div>`}
         </div>
 
         <div class="card">
-          <h2>Confidentialité — droit à l'effacement (RGPD art. 17)</h2>
-          <p class="muted">Cette démo conserve ta connexion LinkedIn (session) et l'historique des posts
-          publiés (serveur). Aucune donnée n'est vendue ni partagée. Le bouton efface les deux
-          immédiatement, et retire les exemples de l'affichage pour te montrer la suppression.</p>
+          <h2>Privacy — right to erasure (GDPR art. 17)</h2>
+          <p class="muted">This demo stores your LinkedIn connection (session) and the history of published
+          posts (server). No data is sold or shared. The button erases both immediately, and removes the
+          examples from view to demonstrate the deletion.</p>
           <form method="post" action="/demo/delete">
             <input type="hidden" name="csrf" value="${s.csrf}">
-            <button type="submit" style="background:#7a2b2b">Supprimer mes données</button>
+            <button type="submit" style="background:#7a2b2b">Delete my data</button>
           </form>
         </div>`
       )
@@ -359,7 +359,7 @@ export function demoRouter() {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
     if (!safeEqual((req.body || {}).csrf, s.csrf)) {
-      return res.status(403).send(page("Erreur", '<div class="card"><p class="warn">Jeton de sécurité invalide.</p></div>'));
+      return res.status(403).send(page("Error", '<div class="card"><p class="warn">Invalid security token.</p></div>'));
     }
     s.linkedin = null;
     s.lastPost = null;
@@ -378,7 +378,7 @@ export function demoRouter() {
       s.oauthState = rid("st");
       res.redirect(authorizeUrl(s.oauthState));
     } catch (e) {
-      res.status(500).send(page("Erreur", `<div class="card"><p class="warn">${e.message}</p></div>`));
+      res.status(500).send(page("Error", `<div class="card"><p class="warn">${e.message}</p></div>`));
     }
   });
 
@@ -387,9 +387,9 @@ export function demoRouter() {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
     const { code, state, error, error_description } = req.query;
-    if (error) return res.status(400).send(page("LinkedIn", `<div class="card"><p class="warn">LinkedIn : ${error} — ${error_description || ""}</p></div>`));
+    if (error) return res.status(400).send(page("LinkedIn", `<div class="card"><p class="warn">LinkedIn: ${error} — ${error_description || ""}</p></div>`));
     if (!code || !state || state !== s.oauthState) {
-      return res.status(400).send(page("LinkedIn", '<div class="card"><p class="warn">État OAuth invalide. <a href="/demo/app">Retour</a></p></div>'));
+      return res.status(400).send(page("LinkedIn", '<div class="card"><p class="warn">Invalid OAuth state. <a href="/demo/app">Back</a></p></div>'));
     }
     try {
       const tok = await exchangeCode(String(code));
@@ -398,7 +398,7 @@ export function demoRouter() {
       s.oauthState = null;
       res.redirect("/demo/app");
     } catch (e) {
-      res.status(502).send(page("LinkedIn", `<div class="card"><p class="warn">Connexion LinkedIn échouée : ${e.message}</p><a href="/demo/app">Retour</a></div>`));
+      res.status(502).send(page("LinkedIn", `<div class="card"><p class="warn">LinkedIn connection failed: ${e.message}</p><a href="/demo/app">Back</a></div>`));
     }
   });
 
@@ -406,11 +406,11 @@ export function demoRouter() {
   r.post("/demo/publish", async (req, res) => {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
-    if (!safeEqual((req.body || {}).csrf, s.csrf)) return res.status(403).send(page("Erreur", '<div class="card"><p class="warn">Jeton de sécurité invalide.</p></div>'));
-    if (!s.linkedin) return res.status(400).send(page("LinkedIn", '<div class="card"><p class="warn">Connecte LinkedIn d\'abord. <a href="/demo/app">Retour</a></p></div>'));
+    if (!safeEqual((req.body || {}).csrf, s.csrf)) return res.status(403).send(page("Error", '<div class="card"><p class="warn">Invalid security token.</p></div>'));
+    if (!s.linkedin) return res.status(400).send(page("LinkedIn", '<div class="card"><p class="warn">Connect LinkedIn first. <a href="/demo/app">Back</a></p></div>'));
     const caption = String((req.body || {}).caption || "").trim();
     const visualTitle = String((req.body || {}).visualTitle || "").trim();
-    if (!caption) return res.status(400).send(page("Vide", '<div class="card"><p class="warn">Le texte du post est vide. <a href="/demo/app">Retour</a></p></div>'));
+    if (!caption) return res.status(400).send(page("Empty", '<div class="card"><p class="warn">The post text is empty. <a href="/demo/app">Back</a></p></div>'));
     try {
       let result;
       if (visualTitle) {
@@ -426,21 +426,21 @@ export function demoRouter() {
       await appendDemoPost({ date: new Date().toISOString().slice(0, 10), text: caption, url: result.url, urn: result.id });
       res.send(
         page(
-          "Publié",
-          `<div class="card"><h1 class="ok">✔ Publié sur LinkedIn</h1>
-            <p>Le post a été publié sur le profil connecté et ajouté au suivi des publications.</p>
-            ${result.url ? `<a class="btn" href="${result.url}" target="_blank" rel="noopener">Voir le post</a>` : '<p class="muted">(Post créé — id retourné par LinkedIn.)</p>'}
+          "Published",
+          `<div class="card"><h1 class="ok">✔ Published on LinkedIn</h1>
+            <p>The post was published to the connected profile and added to publications tracking.</p>
+            ${result.url ? `<a class="btn" href="${result.url}" target="_blank" rel="noopener">View post</a>` : '<p class="muted">(Post created — id returned by LinkedIn.)</p>'}
           </div>
           <div class="card">
-            <h2>Suivi de l'engagement (analytics)</h2>
-            <p class="muted">Lecture des réactions/commentaires du post via l'API (capability « monitor engagement »).</p>
-            <a class="btn" href="/demo/stats?urn=${encodeURIComponent(result.id)}">Voir l'engagement du post</a>
-            <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour au tableau de bord</a></p>
+            <h2>Engagement tracking (analytics)</h2>
+            <p class="muted">Reads the post's reactions/comments via the API ("monitor engagement" capability).</p>
+            <a class="btn" href="/demo/stats?urn=${encodeURIComponent(result.id)}">View post engagement</a>
+            <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Back to dashboard</a></p>
           </div>`
         )
       );
     } catch (e) {
-      res.status(502).send(page("Échec", `<div class="card"><h1 class="warn">Publication échouée</h1><p>${e.message}</p><a href="/demo/app">Retour</a></div>`));
+      res.status(502).send(page("Failed", `<div class="card"><h1 class="warn">Publishing failed</h1><p>${e.message}</p><a href="/demo/app">Back</a></div>`));
     }
   });
 
@@ -466,28 +466,28 @@ export function demoRouter() {
       return res.send(
         page(
           "Analytics",
-          `<div class="card"><h1>Suivi de l'engagement (analytics)</h1>
-            <p class="warn">⏳ Aucun post publié pour le moment</p>
-            <p>Cette page lit l'engagement d'un post publié — réactions, commentaires,
-            impressions — via l'API LinkedIn, au titre de la capability « monitor engagement »
-            de la Community Management API.</p>
-            <p>Le déroulé : publie un post à l'étape 2, puis reviens ici. Les chiffres du post
-            s'afficheront à cet emplacement, lus en direct via l'API (aucune valeur inventée).</p>
-            <p class="muted">C'est exactement l'endroit où l'implémentation de l'analytics se branche.</p>
-            <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour — publier un post</a></p>
+          `<div class="card"><h1>Engagement tracking (analytics)</h1>
+            <p class="warn">⏳ No post published yet</p>
+            <p>This page reads a published post's engagement — reactions, comments, impressions —
+            via the LinkedIn API, under the "monitor engagement" capability of the Community
+            Management API.</p>
+            <p>How it works: publish a post at step 2, then come back here. The post's numbers will
+            appear here, read live via the API (no fabricated values).</p>
+            <p class="muted">This is exactly where the analytics implementation plugs in.</p>
+            <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Back — publish a post</a></p>
           </div>`
         )
       );
     }
-    const back = `<p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a>${post.url ? ` · <a href="${esc(post.url)}" target="_blank" rel="noopener" style="color:#8ab">Voir le post</a>` : ""}</p>`;
+    const back = `<p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Back</a>${post.url ? ` · <a href="${esc(post.url)}" target="_blank" rel="noopener" style="color:#8ab">View post</a>` : ""}</p>`;
     // Il faut un LinkedIn connecté pour lire l'engagement live du post.
     if (!s.linkedin) {
       return res.send(
         page(
           "Analytics",
-          `<div class="card"><h1>Engagement du post</h1>
-            <p class="warn">Connecte LinkedIn pour lire l'engagement de ce post en direct via l'API.</p>
-            <a class="btn" href="/demo/linkedin/start">Connecter LinkedIn</a>${back}
+          `<div class="card"><h1>Post engagement</h1>
+            <p class="warn">Connect LinkedIn to read this post's engagement live via the API.</p>
+            <a class="btn" href="/demo/linkedin/start">Connect LinkedIn</a>${back}
           </div>`
         )
       );
@@ -497,10 +497,10 @@ export function demoRouter() {
       res.send(
         page(
           "Stats",
-          `<div class="card"><h1>Engagement du post</h1>
-            <p class="ok">✔ Données live via l'API LinkedIn</p>
-            <p style="font-size:22px"><b>${stats.likes}</b> réactions &nbsp;·&nbsp; <b>${stats.comments}</b> commentaires</p>
-            <p class="muted">Rafraîchis dans quelques minutes pour voir l'engagement monter.</p>${back}
+          `<div class="card"><h1>Post engagement</h1>
+            <p class="ok">✔ Live data via the LinkedIn API</p>
+            <p style="font-size:22px"><b>${stats.likes}</b> reactions &nbsp;·&nbsp; <b>${stats.comments}</b> comments</p>
+            <p class="muted">Refresh in a few minutes to watch engagement grow.</p>${back}
           </div>`
         )
       );
@@ -510,17 +510,17 @@ export function demoRouter() {
         res.send(
           page(
             "Stats",
-            `<div class="card"><h1>Engagement du post</h1>
-              <p class="warn">⏳ Analytics en attente de l'accès API</p>
-              <p>La lecture de l'engagement (réactions, commentaires, impressions) fait partie
-              de la capability « monitor engagement » demandée dans la Community Management API.
-              Une fois l'accès accordé, ces chiffres s'afficheront ici, pour le post ci-dessus.</p>
-              <p class="muted">Aucun chiffre inventé : c'est bien l'emplacement où l'analytics se branchera.</p>${back}
+            `<div class="card"><h1>Post engagement</h1>
+              <p class="warn">⏳ Analytics awaiting API access</p>
+              <p>Reading engagement (reactions, comments, impressions) is part of the "monitor
+              engagement" capability requested in the Community Management API. Once access is
+              granted, these numbers will appear here, for the post above.</p>
+              <p class="muted">No fabricated numbers: this is exactly where the analytics will plug in.</p>${back}
             </div>`
           )
         );
       } else {
-        res.status(502).send(page("Stats", `<div class="card"><p class="warn">Lecture stats échouée : ${e.message}</p>${back}</div>`));
+        res.status(502).send(page("Stats", `<div class="card"><p class="warn">Failed to read stats: ${e.message}</p>${back}</div>`));
       }
     }
   });
