@@ -140,6 +140,13 @@ export function demoRouter() {
           </form>
         </div>
         <div class="card">
+          <h2>3. Suivi de l'engagement (analytics)</h2>
+          <p class="muted">Lecture des réactions / commentaires / impressions d'un post via l'API
+          — capability « monitor engagement » de la Community Management API. Après publication,
+          les chiffres du post s'affichent ici ; sans post, cette page décrit où l'analytics se branche.</p>
+          <a class="btn" href="/demo/stats">Voir la page analytics</a>
+        </div>
+        <div class="card">
           <h2>Confidentialité — droit à l'effacement (RGPD art. 17)</h2>
           <p class="muted">Cet espace ne conserve que la connexion LinkedIn de ta session
           (jeton d'accès, nom, identifiant), en mémoire, le temps de la démo. Aucune donnée
@@ -252,8 +259,25 @@ export function demoRouter() {
   r.get("/demo/stats", async (req, res) => {
     const s = getSession(req, res);
     if (!s.authed) return res.redirect("/demo");
-    if (!s.linkedin || !s.lastPost) {
-      return res.send(page("Stats", '<div class="card"><p class="warn">Aucun post publié dans cette session. <a href="/demo/app">Rédiger</a></p></div>'));
+    // Pas encore de post publié : on montre QUAND MEME la page analytics, pour que
+    // le reviewer voie l'emplacement et la capability « monitor engagement ». Aucun
+    // chiffre inventé — juste la description de ce qui se branchera ici.
+    if (!s.lastPost) {
+      return res.send(
+        page(
+          "Analytics",
+          `<div class="card"><h1>Suivi de l'engagement (analytics)</h1>
+            <p class="warn">⏳ Aucun post publié dans cette session</p>
+            <p>Cette page lit l'engagement d'un post publié — réactions, commentaires,
+            impressions — via l'API LinkedIn, au titre de la capability « monitor engagement »
+            de la Community Management API.</p>
+            <p>Le déroulé : publie un post à l'étape 2, puis reviens ici. Les chiffres du post
+            s'afficheront à cet emplacement, lus en direct via l'API (aucune valeur inventée).</p>
+            <p class="muted">C'est exactement l'endroit où l'implémentation de l'analytics se branche.</p>
+            <p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour — publier un post</a></p>
+          </div>`
+        )
+      );
     }
     const back = `<p style="margin-top:16px"><a href="/demo/app" style="color:#8ab">Retour</a>${s.lastPost.url ? ` · <a href="${s.lastPost.url}" target="_blank" rel="noopener" style="color:#8ab">Voir le post</a>` : ""}</p>`;
     try {
