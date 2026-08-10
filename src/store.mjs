@@ -4,7 +4,7 @@
 // Taille : quelques Ko par client. Le token (Bearer) EST l'identite : le serveur
 // en deduit le dossier, le client ne peut pas taper dans celui d'un autre.
 
-import { readFile, writeFile, mkdir, readdir, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rm, rename, unlink } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -36,8 +36,43 @@ async function readJson(path, fallback) {
 }
 
 // Donnees clients (tokens, brand, historiques) : fichiers en 0600 (audit CSO F3).
+// Ecriture atomique : on ecrit d'abord un fichier temp dans LE MEME dossier, puis
+// rename() par-dessus la cible (rename est atomique sur un meme systeme de fichiers).
+// Un crash en plein milieu laisse la cible intacte (jamais un JSON tronque). Si
+// l'ecriture echoue, on nettoie le temp pour ne pas laisser de residu .tmp.
 async function writeJson(path, val) {
-  await writeFile(path, JSON.stringify(val, null, 2), { encoding: "utf8", mode: 0o600 });
+  const tmp = path + ".tmp-" + process.pid + "-" + randomBytes(6).toString("hex");
+  try {
+    await writeFile(tmp, JSON.stringify(val, null, 2), { encoding: "utf8", mode: 0o600 });
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
+}
+
+// Mutex en memoire par chemin de fichier : on chaine les operations sur un meme
+// fichier via une Map<path, Promise> pour qu'elles s'executent l'une apres l'autre
+// (les read-modify-write comme appendPost/updateVisual ne se marchent pas dessus).
+// Des fichiers differents restent en parallele. Mono-process : le file lock
+// multi-instance est hors scope (cf. decision 4).
+const locks = new Map();
+function withLock(path, fn) {
+  const prev = locks.get(path) || Promise.resolve();
+  const next = prev.then(fn, fn); // on enchaine meme si la precedente a rejete
+  // On garde la file propre : on retire l'entree quand c'est la derniere.
+  locks.set(
+    path,
+    next.then(
+      () => {
+        if (locks.get(path) === next) locks.delete(path);
+      },
+      () => {
+        if (locks.get(path) === next) locks.delete(path);
+      }
+    )
+  );
+  return next;
 }
 
 // Registre des tokens : { "<token>": { client, created } }.
@@ -102,20 +137,28 @@ export async function setBrand(ctx, brand) {
 // register_font pour poser titleFontFile / bodyFontFile apres coup.
 export async function updateVisual(ctx, patch) {
   const path = join(ctx.dir, "brand.json");
-  const base = (await readJson(path, null)) || { client: ctx.client, voice: {}, visual: {} };
-  base.client = ctx.client;
-  base.visual = { ...(base.visual || {}), ...patch };
-  await writeJson(path, base);
-  return base;
+  // Read-modify-write serialise par fichier (sinon deux patchs concurrents se
+  // clobbent : read A, read B, write A, write B -> B ecrase A).
+  return withLock(path, async () => {
+    const base = (await readJson(path, null)) || { client: ctx.client, voice: {}, visual: {} };
+    base.client = ctx.client;
+    base.visual = { ...(base.visual || {}), ...patch };
+    await writeJson(path, base);
+    return base;
+  });
 }
 
 // --- Suivi des posts ---
 export async function appendPost(ctx, entry) {
   const path = join(ctx.dir, "history.json");
-  const hist = await readJson(path, []);
-  hist.push(entry);
-  await writeJson(path, hist);
-  return hist.length;
+  // Read-modify-write serialise par fichier (sinon des appends concurrents se
+  // perdent : read A, read B, write A, write B -> B ecrase l'ajout de A).
+  return withLock(path, async () => {
+    const hist = await readJson(path, []);
+    hist.push(entry);
+    await writeJson(path, hist);
+    return hist.length;
+  });
 }
 
 export async function listPosts(ctx) {

@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
-import { render } from "./render.mjs";
+import { render, beginShutdown, shutdownRenders, activeRenderCount } from "./render.mjs";
 import { registerFont } from "./fonts.mjs";
 import { playbook } from "./playbook.mjs";
 import { createOAuth } from "./oauth.mjs";
@@ -109,7 +109,7 @@ async function renderTool(ctx, slides, format, label) {
 }
 
 function buildServer(ctx) {
-  const server = new McpServer({ name: "linkedin-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "linkedin-mcp", version: "1.0.0" });
 
   server.registerTool(
     "setup_brand",
@@ -392,6 +392,41 @@ async function replaySession(req, res) {
 app.get("/mcp", replaySession);
 app.delete("/mcp", replaySession);
 
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   console.log(`[linkedin-mcp] up on :${PORT}`);
 });
+
+// Arret propre (decision 5) : sur SIGTERM (rebuild Docker au deploy) ou SIGINT
+// (Ctrl-C en dev), on (1) bloque tout de suite l'admission de nouveaux rendus et
+// on rejette la FILE, (2) stoppe l'ecoute HTTP, (3) laisse un court delai de grace
+// aux rendus EN VOL pour finir, (4) tue les process Chrome restants -> aucun
+// orphelin sur Linux (les childs sont detached), puis on sort. Idempotent, avec un
+// hard-exit de secours pour ne JAMAIS bloquer un deploy.
+// verif manuelle : demarrer le serveur, lancer un rendu, `kill -TERM <pid>` ->
+// sortie propre et aucun process chrome/chromium restant (`ps aux | grep chrome`).
+const SHUTDOWN_GRACE_MS = Number(process.env.SHUTDOWN_GRACE_MS || 5000);
+let shuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return; // idempotent : un 2e signal ne relance rien
+  shuttingDown = true;
+  console.log(`[linkedin-mcp] ${signal} recu, arret en cours...`);
+  // Filet anti-hang : quoi qu'il arrive, on force la sortie apres la grace + 1 s.
+  const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS + 1000);
+  if (typeof hardExit.unref === "function") hardExit.unref();
+  try {
+    beginShutdown(); // (1) plus de nouveau rendu, la file est rejetee
+    httpServer.close(); // (2) on n'accepte plus de connexions
+    // (3) on laisse finir les rendus en vol, borne par le delai de grace
+    const deadline = Date.now() + SHUTDOWN_GRACE_MS;
+    while (activeRenderCount() > 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  } finally {
+    shutdownRenders(); // (4) tue les rendus encore en vol -> aucun Chrome orphelin
+    process.exit(0);
+  }
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

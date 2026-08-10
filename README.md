@@ -3,6 +3,12 @@
 Moteur MCP de contenu LinkedIn, multi-client. Se branche au Claude d'une entreprise
 (claude.ai Team/Enterprise, Claude Desktop, Claude Code) comme connecteur distant.
 
+> **v1.0.0 — beta ouverte.** Le moteur est stable et durci pour la production
+> (timeout de rendu, cap de concurrence, écritures atomiques, arrêt propre). Il
+> évolue selon les retours d'usage. Un bug, une idée, un manque ? Ouvrez une
+> [issue GitHub](https://github.com/KelianMp4/linkedin-mcp/issues) — les retours
+> orientent directement la feuille de route.
+
 ## Ce qu'il fait
 
 Le **Bearer token = l'identite du client**. Le serveur en deduit `data/<token>/`

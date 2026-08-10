@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: test (Node 20 + Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        env:
+          # render.mjs reads the browser binary from CHROME_BIN; point it at the
+          # Chrome installed above so the PNG/PDF render smoke tests run (not skip).
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: npm test
