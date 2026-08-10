@@ -2,7 +2,7 @@
 // On fixe DATA_DIR AVANT d'importer le store (il lit l'env au chargement).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -87,4 +87,65 @@ test("deleteClientData sur token inconnu ne casse pas (removed=false)", async ()
   const out = await store.deleteClientData("lkm_jamais_vu");
   assert.equal(out.removed, false);
   assert.equal(out.client, null);
+});
+
+// --- Concurrence : le mutex par token empeche les pertes d'ecriture ---
+
+test("CONCURRENCE : N appends simultanes ne perdent aucune entree", async () => {
+  const t = await store.mintToken("Concurrent");
+  const ctx = await store.resolveToken(t);
+  const N = 20;
+
+  await Promise.all(
+    Array.from({ length: N }, (_, i) =>
+      store.appendPost(ctx, { date: "2026-09-01", theme: "post-" + i })
+    )
+  );
+
+  const hist = await store.listPosts(ctx);
+  assert.equal(hist.length, N, "aucune perte : longueur == N");
+  // Toutes les entrees distinctes sont bien presentes (aucun clobber).
+  const themes = new Set(hist.map((h) => h.theme));
+  assert.equal(themes.size, N);
+
+  // history.json est un JSON valide et parseable.
+  const raw = await readFile(join(ctx.dir, "history.json"), "utf8");
+  assert.doesNotThrow(() => JSON.parse(raw));
+});
+
+test("CONCURRENCE : updateVisual simultanes conservent toutes les cles", async () => {
+  const t = await store.mintToken("VisualConcurrent");
+  const ctx = await store.resolveToken(t);
+  await store.setBrand(ctx, { voice: { registre: "manifeste" }, visual: { bg: "#000" } });
+
+  await Promise.all([
+    store.updateVisual(ctx, { k1: "v1" }),
+    store.updateVisual(ctx, { k2: "v2" }),
+    store.updateVisual(ctx, { k3: "v3" }),
+    store.updateVisual(ctx, { k4: "v4" }),
+    store.updateVisual(ctx, { k5: "v5" }),
+  ]);
+
+  const b = await store.getBrand(ctx);
+  for (const [k, v] of Object.entries({ k1: "v1", k2: "v2", k3: "v3", k4: "v4", k5: "v5" })) {
+    assert.equal(b.visual[k], v, `cle ${k} preservee`);
+  }
+  // La voix et le champ initial ne sont pas ecrases.
+  assert.equal(b.voice.registre, "manifeste");
+  assert.equal(b.visual.bg, "#000");
+});
+
+test("ATOMICITE : pas de residu .tmp apres des ecritures concurrentes", async () => {
+  const t = await store.mintToken("NoResidu");
+  const ctx = await store.resolveToken(t);
+
+  await Promise.all([
+    ...Array.from({ length: 10 }, (_, i) => store.appendPost(ctx, { i })),
+    store.updateVisual(ctx, { x: "1" }),
+    store.updateVisual(ctx, { y: "2" }),
+  ]);
+
+  const files = await readdir(ctx.dir);
+  const residus = files.filter((f) => f.includes(".tmp"));
+  assert.deepEqual(residus, [], "aucun fichier .tmp laisse derriere");
 });
