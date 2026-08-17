@@ -1,6 +1,6 @@
 {
   "name": "@stacko/linkedin-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Moteur MCP de contenu LinkedIn : fournit une methode de redaction (le Claude du client redige) + rend les visuels on-brand (PNG / carrousel PDF) via headless Chrome. Multi-client par fichier de config.",
   "license": "MIT",
   "type": "module",

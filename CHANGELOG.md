@@ -4,7 +4,9 @@ Toutes les évolutions notables de ce projet sont documentées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/) ;
 versionnement [SemVer](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [1.1.0] - 2026-08-17
+
+Publier, planifier et apprendre de ses résultats — directement depuis Claude.
 
 ### Ajouté
 - **Publication LinkedIn depuis le MCP** : deux outils `connect_linkedin` et
@@ -75,4 +77,5 @@ en production : ne jamais figer, ne jamais perdre de données client.
 - Aucune dépendance ajoutée : le durcissement reste sans lib externe.
 - Aucun changement de comportement fonctionnel des outils MCP existants.
 
+[1.1.0]: https://github.com/KelianMp4/linkedin-mcp/releases/tag/v1.1.0
 [1.0.0]: https://github.com/KelianMp4/linkedin-mcp/releases/tag/v1.0.0
