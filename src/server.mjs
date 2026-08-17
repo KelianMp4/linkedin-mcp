@@ -25,6 +25,7 @@ import { demoRouter } from "./demo.mjs";
 import { isConfigured, publishText, publishImage } from "./linkedin.mjs";
 import { startLinkedinConnect, completeLinkedinConnect, isConnectState } from "./connect.mjs";
 import { createSessionStore } from "./sessions.mjs";
+import { dueJobs, validateWhen } from "./scheduler.mjs";
 import {
   resolveToken,
   getBrand,
@@ -35,6 +36,10 @@ import {
   listPosts,
   updatePost,
   getLinkedin,
+  addScheduledPost,
+  listScheduled,
+  cancelScheduled,
+  markScheduled,
   listTokens,
   deleteClientData,
   DATA_DIR,
@@ -119,6 +124,37 @@ async function renderTool(ctx, slides, format, label) {
       content: [{ type: "text", text: `Rendu echoue : ${humanRenderError(e)}` }],
     };
   }
+}
+
+// Publication LinkedIn partagée par l'outil post_to_linkedin ET le worker de
+// planification : un seul endroit pour le rendu du visuel, la publication et
+// l'ajout au suivi. Lève une erreur kind="no-linkedin" si le client n'a pas
+// connecté de compte. `source` trace l'origine dans l'historique.
+async function publishToLinkedin(ctx, texte, visuel, source) {
+  const li = await getLinkedin(ctx);
+  if (!li) {
+    const e = new Error("Aucun compte LinkedIn connecte");
+    e.kind = "no-linkedin";
+    throw e;
+  }
+  let result;
+  if (visuel) {
+    const brand = await getBrand(ctx);
+    const out = await render([visuel], brand.visual, "png", join(ctx.dir, "fonts"));
+    const img = Buffer.from(out.base64, "base64");
+    result = await publishImage(li.accessToken, li.urn, texte, img, "image/png");
+  } else {
+    result = await publishText(li.accessToken, li.urn, texte);
+  }
+  await appendPost(ctx, {
+    date: new Date().toISOString().slice(0, 10),
+    theme: texte.split(/\r?\n/)[0].slice(0, 80),
+    format: visuel ? "image" : "texte",
+    url: result.url,
+    urn: result.id,
+    source,
+  });
+  return { result, name: li.name };
 }
 
 function buildServer(ctx) {
@@ -396,48 +432,88 @@ function buildServer(ctx) {
       },
     },
     async ({ texte, visuel }) => {
-      const li = await getLinkedin(ctx);
-      if (!li) {
-        return {
-          isError: true,
-          content: [
-            { type: "text", text: "Aucun compte LinkedIn connecte. Lance d'abord connect_linkedin." },
-          ],
-        };
-      }
       try {
-        let result;
-        if (visuel) {
-          const brand = await getBrand(ctx);
-          const out = await render([visuel], brand.visual, "png", join(ctx.dir, "fonts"));
-          const img = Buffer.from(out.base64, "base64");
-          result = await publishImage(li.accessToken, li.urn, texte, img, "image/png");
-        } else {
-          result = await publishText(li.accessToken, li.urn, texte);
-        }
-        // Ajout au suivi (metriques laissees vides : saisies a la main plus tard).
-        await appendPost(ctx, {
-          date: new Date().toISOString().slice(0, 10),
-          theme: texte.split(/\r?\n/)[0].slice(0, 80),
-          format: visuel ? "image" : "texte",
-          url: result.url,
-          urn: result.id,
-          source: "post_to_linkedin",
-        });
+        const { result, name } = await publishToLinkedin(ctx, texte, visuel, "post_to_linkedin");
         return {
           content: [
             {
               type: "text",
-              text: `Publie sur LinkedIn (${li.name || "profil connecte"}) et ajoute au suivi.${result.url ? `\n${result.url}` : ""}`,
+              text: `Publie sur LinkedIn (${name || "profil connecte"}) et ajoute au suivi.${result.url ? `\n${result.url}` : ""}`,
             },
           ],
         };
       } catch (e) {
+        const msg =
+          e.kind === "no-linkedin"
+            ? "Aucun compte LinkedIn connecte. Lance d'abord connect_linkedin."
+            : `Publication echouee : ${String(e?.message || e)}`;
+        return { isError: true, content: [{ type: "text", text: msg }] };
+      }
+    }
+  );
+
+  server.registerTool(
+    "schedule_post",
+    {
+      title: "Planifier une publication LinkedIn",
+      description:
+        "Planifie la publication d'un post (texte deja valide par le client) a une heure ABSOLUE (ISO 8601, ex: 2026-09-20T09:00:00Z). Le serveur publiera automatiquement a l'heure prevue via le compte connecte. Le client valide le texte MAINTENANT (human-in-the-loop) ; la planification honore cet accord. Requiert connect_linkedin.",
+      inputSchema: {
+        texte: z.string().describe("le texte du post, deja valide par le client"),
+        when: z.string().describe("horodatage ISO 8601 absolu, ex: 2026-09-20T09:00:00Z"),
+        visuel: slideShape.optional().describe("optionnel : slide on-brand rendue en image et jointe"),
+      },
+    },
+    async ({ texte, when, visuel }) => {
+      if (!(await getLinkedin(ctx))) {
         return {
           isError: true,
-          content: [{ type: "text", text: `Publication echouee : ${String(e?.message || e)}` }],
+          content: [{ type: "text", text: "Aucun compte LinkedIn connecte. Lance d'abord connect_linkedin." }],
         };
       }
+      const v = validateWhen(when);
+      if (!v.ok) return { isError: true, content: [{ type: "text", text: v.error }] };
+      const job = await addScheduledPost(ctx, { when: v.when, texte, visuel: visuel || null });
+      return {
+        content: [
+          { type: "text", text: `Post planifie pour le ${v.when} (id ${job.id}). Annulable via cancel_scheduled.` },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "list_scheduled",
+    {
+      title: "Lister les publications planifiees",
+      description: "Retourne les publications planifiees (en attente, envoyees, echouees, annulees) en JSON.",
+      inputSchema: {},
+    },
+    async () => {
+      const jobs = await listScheduled(ctx);
+      return { content: [{ type: "text", text: JSON.stringify(jobs, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "cancel_scheduled",
+    {
+      title: "Annuler une publication planifiee",
+      description: "Annule un post planifie encore en attente, repere par son id (cf. list_scheduled).",
+      inputSchema: { id: z.string().describe("id du job planifie") },
+    },
+    async ({ id }) => {
+      const out = await cancelScheduled(ctx, id);
+      return {
+        content: [
+          {
+            type: "text",
+            text: out.ok
+              ? `Publication planifiee ${id} annulee.`
+              : `Aucune publication planifiee en attente avec l'id ${id}.`,
+          },
+        ],
+      };
     }
   );
 
@@ -594,6 +670,52 @@ const sweeper = setInterval(() => {
 }, SESSION_SWEEP_MS);
 if (typeof sweeper.unref === "function") sweeper.unref();
 
+// Worker de planification : scanne periodiquement les jobs de TOUS les clients et
+// publie ceux arrivés à échéance via leur token LinkedIn stocké. Persisté sur disque
+// -> les jobs survivent à un redémarrage (repris au tick suivant). Un job échoué est
+// marqué "failed" (pas de retry infini) et reste visible via list_scheduled. Garde
+// de ré-entrance : un tick ne démarre jamais si le précédent tourne encore (évite
+// toute double publication). Le tick lui-même ne publie que des jobs "pending", et
+// marque chaque job AVANT de passer au suivant.
+const SCHEDULER_TICK_MS = Number(process.env.SCHEDULER_TICK_MS || 30 * 1000);
+let schedulerBusy = false;
+
+async function runScheduler() {
+  if (schedulerBusy || shuttingDown) return;
+  schedulerBusy = true;
+  try {
+    const now = Date.now();
+    for (const t of await listTokens()) {
+      const ctx = await resolveToken(t.token);
+      if (!ctx) continue;
+      for (const job of dueJobs(await listScheduled(ctx), now)) {
+        try {
+          const { result } = await publishToLinkedin(ctx, job.texte, job.visuel || undefined, "schedule_post");
+          await markScheduled(ctx, job.id, {
+            status: "sent",
+            sentAt: new Date().toISOString(),
+            url: result.url,
+            urn: result.id,
+          });
+        } catch (e) {
+          await markScheduled(ctx, job.id, {
+            status: "failed",
+            failedAt: new Date().toISOString(),
+            error: String(e?.message || e),
+          });
+        }
+      }
+    }
+  } finally {
+    schedulerBusy = false;
+  }
+}
+
+const scheduler = setInterval(() => {
+  runScheduler().catch(() => {});
+}, SCHEDULER_TICK_MS);
+if (typeof scheduler.unref === "function") scheduler.unref();
+
 async function tokenCtx(req) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -675,6 +797,7 @@ async function gracefulShutdown(signal) {
   if (typeof hardExit.unref === "function") hardExit.unref();
   try {
     clearInterval(sweeper); // stoppe le balayage des sessions
+    clearInterval(scheduler); // stoppe le worker de planification
     beginShutdown(); // (1) plus de nouveau rendu, la file est rejetee
     httpServer.close(); // (2) on n'accepte plus de connexions
     // (3) on laisse finir les rendus en vol, borne par le delai de grace

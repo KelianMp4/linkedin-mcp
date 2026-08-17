@@ -153,6 +153,40 @@ test("setLinkedin/getLinkedin : roundtrip, efface avec le dossier client", async
   assert.equal(await store.resolveToken(t), null);
 });
 
+test("scheduling : add/list/cancel + markScheduled", async () => {
+  const t = await store.mintToken("Sched");
+  const ctx = await store.resolveToken(t);
+  assert.deepEqual(await store.listScheduled(ctx), []);
+
+  const job = await store.addScheduledPost(ctx, { when: "2026-12-01T09:00:00Z", texte: "Bonjour", visuel: null });
+  assert.ok(job.id.startsWith("job_"));
+  assert.equal(job.status, "pending");
+
+  const jobs = await store.listScheduled(ctx);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].texte, "Bonjour");
+
+  // Annulation d'un job pending.
+  const c = await store.cancelScheduled(ctx, job.id);
+  assert.equal(c.ok, true);
+  assert.equal((await store.listScheduled(ctx))[0].status, "canceled");
+
+  // On n'annule pas un job déjà non-pending.
+  assert.equal((await store.cancelScheduled(ctx, job.id)).ok, false);
+  assert.equal((await store.cancelScheduled(ctx, "job_inexistant")).ok, false);
+});
+
+test("markScheduled : marque le résultat d'un job (sent) et no-op si absent", async () => {
+  const t = await store.mintToken("SchedMark");
+  const ctx = await store.resolveToken(t);
+  const job = await store.addScheduledPost(ctx, { when: "2026-12-01T09:00:00Z", texte: "x" });
+  const out = await store.markScheduled(ctx, job.id, { status: "sent", urn: "urn:li:share:1" });
+  assert.equal(out.ok, true);
+  assert.equal((await store.listScheduled(ctx))[0].status, "sent");
+  assert.equal((await store.listScheduled(ctx))[0].urn, "urn:li:share:1");
+  assert.equal((await store.markScheduled(ctx, "nope", { status: "sent" })).ok, false);
+});
+
 // --- Concurrence : le mutex par token empeche les pertes d'ecriture ---
 
 test("CONCURRENCE : N appends simultanes ne perdent aucune entree", async () => {

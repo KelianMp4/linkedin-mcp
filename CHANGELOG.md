@@ -24,6 +24,11 @@ versionnement [SemVer](https://semver.org/lang/fr/).
   aucune tendance inventée, et rien tant qu'il n'y a pas assez de données. Les mêmes
   signaux nourrissent `get_playbook` (« ce qui marche pour toi »), pour que le contenu
   s'améliore à partir des résultats réels du client.
+- **Planification** : `schedule_post(texte, when, visuel?)` planifie une publication
+  à une heure absolue (ISO 8601) ; `list_scheduled` / `cancel_scheduled` gèrent la file.
+  Un worker serveur publie les posts dus via le compte connecté du client. Le texte est
+  validé au moment de planifier (human-in-the-loop) ; les jobs sont persistés (survivent
+  à un redémarrage) et un échec est marqué sans retry infini.
 - **Gabarits de slide** (`layout`) pour les visuels : `hook` (accroche), `stat`
   (chiffre qui domine), `quote` (citation), `list` (puces via le champ `puces`), `cta`,
   `default`. Auto-détecté selon les champs fournis, ou explicite. L'auto-fit anti-coupe

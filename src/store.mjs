@@ -216,6 +216,55 @@ export async function updatePost(ctx, id, patch) {
   });
 }
 
+// --- Publications planifiées (data/<token>/scheduled.json) ---
+// Un job = { id, when, texte, visuel?, status: pending|sent|failed|canceled, ... }.
+// Toutes les mutations sont sérialisées par fichier (read-modify-write sûr).
+export async function addScheduledPost(ctx, job) {
+  const path = join(ctx.dir, "scheduled.json");
+  return withLock(path, async () => {
+    const jobs = await readJson(path, []);
+    const id = "job_" + randomBytes(9).toString("base64url");
+    const full = { id, status: "pending", createdAt: new Date().toISOString(), ...job };
+    jobs.push(full);
+    await writeJson(path, jobs);
+    return full;
+  });
+}
+
+export async function listScheduled(ctx) {
+  return readJson(join(ctx.dir, "scheduled.json"), []);
+}
+
+// Annule un job pending (id). Renvoie { ok, job? } ; ok=false si introuvable ou
+// déjà parti (on n'annule pas un job sent/failed).
+export async function cancelScheduled(ctx, id) {
+  const path = join(ctx.dir, "scheduled.json");
+  return withLock(path, async () => {
+    const jobs = await readJson(path, []);
+    const j = jobs.find((x) => x.id === id);
+    if (!j || j.status !== "pending") return { ok: false };
+    j.status = "canceled";
+    j.canceledAt = new Date().toISOString();
+    await writeJson(path, jobs);
+    return { ok: true, job: j };
+  });
+}
+
+// Marque le résultat d'un job après tentative de publication par le worker.
+// patch = { status: "sent"|"failed", ...(url, urn, error, sentAt) }. Idempotent
+// sur l'id : si le job a disparu, no-op.
+export async function markScheduled(ctx, id, patch) {
+  const path = join(ctx.dir, "scheduled.json");
+  return withLock(path, async () => {
+    const jobs = await readJson(path, []);
+    const j = jobs.find((x) => x.id === id);
+    if (!j) return { ok: false };
+    Object.assign(j, patch);
+    await writeJson(path, jobs);
+    return { ok: true, job: j };
+  });
+}
+
 // --- Connexion LinkedIn par client (data/<token>/linkedin.json, 0600) ---
 // Stocke l'access token LinkedIn du membre + son URN person, pose apres le flow
 // connect_linkedin. Efface avec le reste du dossier au droit a l'effacement.

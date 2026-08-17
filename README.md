@@ -42,6 +42,9 @@ Le **Bearer token = l'identite du client**. Le serveur en deduit `data/<token>/`
   jeton LinkedIn est stocke **par client** pour publier sur son profil.
 - `post_to_linkedin(texte, visuel?)` — publie (texte ou visuel on-brand) sur le profil
   connecte, **apres validation humaine du texte**. Ajoute au suivi automatiquement.
+- `schedule_post(texte, when, visuel?)` — planifie une publication a une heure absolue
+  (ISO 8601). Un worker serveur publie a l'heure prevue ; le texte est valide au moment
+  de planifier. `list_scheduled` / `cancel_scheduled` gerent la file.
 - `log_post` / `list_posts` — suivi des posts (metriques saisies a la main).
 - `update_post_metrics(id)` — complete apres coup les metriques d'un post loggue.
 - `analyze_posts` — bilan deterministe (cadence, format/themes les plus engageants,
