@@ -49,3 +49,48 @@ test("une slide par entree du plan", () => {
   const html = buildHtml([{ titre: "1" }, { titre: "2" }, { titre: "3" }], V);
   assert.equal((html.match(/class="slide"/g) || []).length, 3);
 });
+
+// --- Gabarits par slide (layout) ---
+
+test("layout explicite respecte (data-layout)", () => {
+  const html = buildHtml([{ layout: "quote", corps: "Une citation.", titre: "Auteur" }], V);
+  assert.ok(html.includes('data-layout="quote"'));
+  assert.ok(html.includes("<blockquote>Une citation.</blockquote>"));
+  assert.ok(html.includes('class="cite"'));
+});
+
+test("auto-detection : puces -> gabarit list, une ligne par puce", () => {
+  const html = buildHtml([{ titre: "Trois signaux", puces: ["Un", "Deux", "Trois"] }], V);
+  assert.ok(html.includes('data-layout="list"'));
+  assert.equal((html.match(/<li>/g) || []).length, 3);
+  assert.ok(html.includes("<li>Un</li>"));
+});
+
+test("auto-detection : chiffre seul -> gabarit stat", () => {
+  const html = buildHtml([{ chiffre: "42%", titre: "de gain" }], V);
+  assert.ok(html.includes('data-layout="stat"'));
+  assert.ok(html.includes('class="stat-label"'));
+});
+
+test("auto-detection : titre seul -> gabarit hook", () => {
+  const html = buildHtml([{ titre: "Une accroche forte" }], V);
+  assert.ok(html.includes('data-layout="hook"'));
+});
+
+test("default : titre + corps garde l'ordre historique", () => {
+  const html = buildHtml([{ titre: "T", corps: "C" }], V);
+  assert.ok(html.includes('data-layout="default"'));
+  assert.ok(html.indexOf("<h1>T</h1>") < html.indexOf("<p>C</p>"));
+});
+
+test("les puces sont echappees (pas d'injection via la liste)", () => {
+  const html = buildHtml([{ puces: ["<script>x</script>"] }], V);
+  assert.ok(!html.includes("<script>x"));
+  assert.ok(html.includes("&lt;script&gt;"));
+});
+
+test("le style des variantes reste pilote par --scale (auto-fit)", () => {
+  const html = buildHtml([{ layout: "stat", chiffre: "9" }], V);
+  // Le chiffre du gabarit stat utilise bien var(--scale).
+  assert.ok(/data-layout="stat"\] \.chiffre \{ font-size: calc\(300px \* var\(--scale\)\)/.test(html));
+});

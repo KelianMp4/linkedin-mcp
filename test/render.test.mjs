@@ -168,12 +168,14 @@ test("T1 — un rendu qui hang est tue par le timeout et rejette (pas d'∞)", a
   }
 });
 
-test("T2 — timeout transitoire => 1 retry (binaire invoque 2 fois)", async () => {
+test("T2 — timeout transitoire => 1 retry (2 tentatives de spawn)", async () => {
   const fake = makeFakeChrome("sleep");
   try {
-    const render = await freshRender(fake, 300);
-    await assert.rejects(() => render([{ titre: "x" }], V, "png"));
-    assert.equal(fake.invocations(), 2, "le timeout doit declencher exactement 1 retry");
+    // On compte cote render (mod._spawnAttempts), synchrone et deterministe : pas
+    // de course entre le timeout et le boot du faux chrome (qui rendait ce test flaky).
+    const mod = await freshMod(fake, 300);
+    await assert.rejects(() => mod.render([{ titre: "x" }], V, "png"));
+    assert.equal(mod._spawnAttempts(), 2, "le timeout doit declencher exactement 1 retry");
   } finally {
     fake.cleanup();
   }
@@ -182,10 +184,12 @@ test("T2 — timeout transitoire => 1 retry (binaire invoque 2 fois)", async () 
 test("T2 — flake transitoire : 1re tentative timeout, 2e reussit", async () => {
   const fake = makeFakeChrome("flake");
   try {
-    const render = await freshRender(fake, 300);
-    const out = await render([{ titre: "x" }], V, "png");
+    // Timeout genereux : le chemin SUCCES (2e invocation) doit boot + ecrire sa
+    // sortie + sortir 0 avant que le timeout ne le tue, meme sous charge.
+    const mod = await freshMod(fake, 4000);
+    const out = await mod.render([{ titre: "x" }], V, "png");
     assert.equal(out.mimeType, "image/png");
-    assert.equal(fake.invocations(), 2, "1 timeout + 1 succes = 2 invocations");
+    assert.equal(mod._spawnAttempts(), 2, "1 timeout + 1 succes = 2 tentatives");
   } finally {
     fake.cleanup();
   }

@@ -148,6 +148,38 @@ export async function updateVisual(ctx, patch) {
   });
 }
 
+// Fusion profonde : b ecrase a, les objets sont fusionnes recursivement, les
+// tableaux et scalaires sont remplaces tels quels. Sert au patch partiel du brand
+// (voice.produit imbrique) sans ecraser le reste.
+function deepMerge(a, b) {
+  if (b === null || typeof b !== "object" || Array.isArray(b)) return b;
+  const out = a && typeof a === "object" && !Array.isArray(a) ? { ...a } : {};
+  for (const k of Object.keys(b)) out[k] = deepMerge(out[k], b[k]);
+  return out;
+}
+
+// Patch partiel du brand (voix + charte) avec archivage de la version precedente
+// dans brand_history.json (audit / rollback). Serialise par fichier (comme
+// updateVisual). Ne remet jamais un JSON tronque en cas de crash (writeJson atomique).
+export async function updateBrand(ctx, patch) {
+  const path = join(ctx.dir, "brand.json");
+  return withLock(path, async () => {
+    const base = (await readJson(path, null)) || { client: ctx.client, voice: {}, visual: {} };
+    // Archive la version pre-patch (seulement si un brand existait deja).
+    if (Object.keys(base).length && base.voice) {
+      const histPath = join(ctx.dir, "brand_history.json");
+      const arr = await readJson(histPath, []);
+      arr.push({ at: new Date().toISOString(), brand: base });
+      await writeJson(histPath, arr);
+    }
+    const merged = deepMerge(base, patch);
+    merged.client = ctx.client;
+    merged.updatedAt = new Date().toISOString();
+    await writeJson(path, merged);
+    return merged;
+  });
+}
+
 // --- Suivi des posts ---
 export async function appendPost(ctx, entry) {
   const path = join(ctx.dir, "history.json");
@@ -163,6 +195,90 @@ export async function appendPost(ctx, entry) {
 
 export async function listPosts(ctx) {
   return readJson(join(ctx.dir, "history.json"), []);
+}
+
+// Met a jour un post deja loggue, repere par son id 1-base (celui renvoye par
+// appendPost / log_post). Fusionne les metriques et laisse patcher quelques champs
+// libres. Serialise par fichier. Renvoie { ok, count, entry? }.
+export async function updatePost(ctx, id, patch) {
+  const path = join(ctx.dir, "history.json");
+  return withLock(path, async () => {
+    const hist = await readJson(path, []);
+    const i = Number(id) - 1;
+    if (!Number.isInteger(i) || i < 0 || i >= hist.length) return { ok: false, count: hist.length };
+    const entry = hist[i];
+    if (patch.metriques) entry.metriques = { ...(entry.metriques || {}), ...patch.metriques };
+    for (const k of ["resultat_business", "notes", "theme", "angle", "format"]) {
+      if (patch[k] !== undefined) entry[k] = patch[k];
+    }
+    await writeJson(path, hist);
+    return { ok: true, count: hist.length, entry };
+  });
+}
+
+// --- Publications planifiées (data/<token>/scheduled.json) ---
+// Un job = { id, when, texte, visuel?, status: pending|sent|failed|canceled, ... }.
+// Toutes les mutations sont sérialisées par fichier (read-modify-write sûr).
+export async function addScheduledPost(ctx, job) {
+  const path = join(ctx.dir, "scheduled.json");
+  return withLock(path, async () => {
+    const jobs = await readJson(path, []);
+    const id = "job_" + randomBytes(9).toString("base64url");
+    const full = { id, status: "pending", createdAt: new Date().toISOString(), ...job };
+    jobs.push(full);
+    await writeJson(path, jobs);
+    return full;
+  });
+}
+
+export async function listScheduled(ctx) {
+  return readJson(join(ctx.dir, "scheduled.json"), []);
+}
+
+// Annule un job pending (id). Renvoie { ok, job? } ; ok=false si introuvable ou
+// déjà parti (on n'annule pas un job sent/failed).
+export async function cancelScheduled(ctx, id) {
+  const path = join(ctx.dir, "scheduled.json");
+  return withLock(path, async () => {
+    const jobs = await readJson(path, []);
+    const j = jobs.find((x) => x.id === id);
+    if (!j || j.status !== "pending") return { ok: false };
+    j.status = "canceled";
+    j.canceledAt = new Date().toISOString();
+    await writeJson(path, jobs);
+    return { ok: true, job: j };
+  });
+}
+
+// Marque le résultat d'un job après tentative de publication par le worker.
+// patch = { status: "sent"|"failed", ...(url, urn, error, sentAt) }. Idempotent
+// sur l'id : si le job a disparu, no-op.
+export async function markScheduled(ctx, id, patch) {
+  const path = join(ctx.dir, "scheduled.json");
+  return withLock(path, async () => {
+    const jobs = await readJson(path, []);
+    const j = jobs.find((x) => x.id === id);
+    if (!j) return { ok: false };
+    Object.assign(j, patch);
+    await writeJson(path, jobs);
+    return { ok: true, job: j };
+  });
+}
+
+// --- Connexion LinkedIn par client (data/<token>/linkedin.json, 0600) ---
+// Stocke l'access token LinkedIn du membre + son URN person, pose apres le flow
+// connect_linkedin. Efface avec le reste du dossier au droit a l'effacement.
+export async function setLinkedin(ctx, data) {
+  await writeJson(join(ctx.dir, "linkedin.json"), data);
+  return data;
+}
+
+export async function getLinkedin(ctx) {
+  return readJson(join(ctx.dir, "linkedin.json"), null);
+}
+
+export async function clearLinkedin(ctx) {
+  await unlink(join(ctx.dir, "linkedin.json")).catch(() => {});
 }
 
 export { DATA_DIR };

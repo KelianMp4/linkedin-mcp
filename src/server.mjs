@@ -18,15 +18,28 @@ import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { render, beginShutdown, shutdownRenders, activeRenderCount } from "./render.mjs";
 import { registerFont } from "./fonts.mjs";
 import { playbook } from "./playbook.mjs";
+import { lintPost } from "./lint.mjs";
+import { analyzePosts, summarizeAnalysis, playbookInsights } from "./analyze.mjs";
 import { createOAuth } from "./oauth.mjs";
 import { demoRouter } from "./demo.mjs";
+import { isConfigured, publishText, publishImage } from "./linkedin.mjs";
+import { startLinkedinConnect, completeLinkedinConnect, isConnectState } from "./connect.mjs";
+import { createSessionStore } from "./sessions.mjs";
+import { dueJobs, validateWhen } from "./scheduler.mjs";
 import {
   resolveToken,
   getBrand,
   setBrand,
+  updateBrand,
   updateVisual,
   appendPost,
   listPosts,
+  updatePost,
+  getLinkedin,
+  addScheduledPost,
+  listScheduled,
+  cancelScheduled,
+  markScheduled,
   listTokens,
   deleteClientData,
   DATA_DIR,
@@ -43,6 +56,11 @@ const slideShape = z.object({
   chiffre: z.string().optional().describe("chiffre cle mis en avant"),
   cta: z.string().optional(),
   note: z.string().optional(),
+  puces: z.array(z.string()).optional().describe("liste a puces (utilise le gabarit list)"),
+  layout: z
+    .enum(["hook", "stat", "quote", "list", "cta", "default"])
+    .optional()
+    .describe("gabarit visuel : hook (accroche), stat (chiffre), quote (citation), list (puces), cta, default. Auto-detecte si absent."),
 });
 
 const brandInput = z.object({
@@ -108,6 +126,37 @@ async function renderTool(ctx, slides, format, label) {
   }
 }
 
+// Publication LinkedIn partagée par l'outil post_to_linkedin ET le worker de
+// planification : un seul endroit pour le rendu du visuel, la publication et
+// l'ajout au suivi. Lève une erreur kind="no-linkedin" si le client n'a pas
+// connecté de compte. `source` trace l'origine dans l'historique.
+async function publishToLinkedin(ctx, texte, visuel, source) {
+  const li = await getLinkedin(ctx);
+  if (!li) {
+    const e = new Error("Aucun compte LinkedIn connecte");
+    e.kind = "no-linkedin";
+    throw e;
+  }
+  let result;
+  if (visuel) {
+    const brand = await getBrand(ctx);
+    const out = await render([visuel], brand.visual, "png", join(ctx.dir, "fonts"));
+    const img = Buffer.from(out.base64, "base64");
+    result = await publishImage(li.accessToken, li.urn, texte, img, "image/png");
+  } else {
+    result = await publishText(li.accessToken, li.urn, texte);
+  }
+  await appendPost(ctx, {
+    date: new Date().toISOString().slice(0, 10),
+    theme: texte.split(/\r?\n/)[0].slice(0, 80),
+    format: visuel ? "image" : "texte",
+    url: result.url,
+    urn: result.id,
+    source,
+  });
+  return { result, name: li.name };
+}
+
 function buildServer(ctx) {
   const server = new McpServer({ name: "linkedin-mcp", version: "1.0.0" });
 
@@ -135,7 +184,62 @@ function buildServer(ctx) {
     },
     async () => {
       const brand = await getBrand(ctx);
-      return { content: [{ type: "text", text: playbook(brand) }] };
+      // Valeur composee : on injecte les recos tirees de l'historique du client.
+      const insights = playbookInsights(analyzePosts(await listPosts(ctx)));
+      return { content: [{ type: "text", text: playbook(brand, insights) }] };
+    }
+  );
+
+  server.registerTool(
+    "lint_post",
+    {
+      title: "Verifier un post avant publication (regles de canal)",
+      description:
+        "Controle DETERMINISTE d'un brouillon de post LinkedIn : accroche en 1re ligne, aucun lien dans le corps, pas de tiret cadratin (signature IA), repere de coupe (~210 car). Aucun texte genere : renvoie les problemes a corriger. Appelle ceci AVANT de publier.",
+      inputSchema: { texte: z.string().describe("le brouillon de post a verifier") },
+    },
+    async ({ texte }) => {
+      const r = lintPost(texte);
+      const head = r.ok
+        ? r.warnings
+          ? `✅ Aucune erreur bloquante, ${r.warnings} avertissement(s) a corriger.`
+          : "✅ Post conforme aux regles de canal."
+        : `❌ ${r.errors} probleme(s) bloquant(s), ${r.warnings} avertissement(s).`;
+      const list = r.issues.map((i) => `- [${i.level}] ${i.rule} : ${i.message}`);
+      const stats = `Stats : ${r.stats.chars} car, accroche ${r.stats.firstLineChars} car, coupe ~${r.stats.foldAt} car.`;
+      return { content: [{ type: "text", text: [head, ...list, "", stats].join("\n") }] };
+    }
+  );
+
+  server.registerTool(
+    "get_brand",
+    {
+      title: "Lire l'identite de marque enregistree",
+      description:
+        "Retourne l'identite de marque stockee (voix + charte visuelle) en JSON. Pratique avant un update_brand pour voir l'existant, ou pour verifier la config.",
+      inputSchema: {},
+    },
+    async () => {
+      const brand = await getBrand(ctx);
+      return { content: [{ type: "text", text: JSON.stringify(brand, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "update_brand",
+    {
+      title: "Mettre a jour l'identite de marque (patch partiel)",
+      description:
+        "Applique un patch partiel a l'identite de marque : ne fournis QUE les champs a changer (fusion profonde, le reste est conserve). La version precedente est archivee. Utilise get_brand d'abord pour voir l'existant.",
+      inputSchema: brandInput.shape,
+    },
+    async (patch) => {
+      const saved = await updateBrand(ctx, patch);
+      return {
+        content: [
+          { type: "text", text: `Identite mise a jour pour ${saved.client} (version precedente archivee).` },
+        ],
+      };
     }
   );
 
@@ -237,6 +341,183 @@ function buildServer(ctx) {
   );
 
   server.registerTool(
+    "analyze_posts",
+    {
+      title: "Analyser le suivi (ce qui marche)",
+      description:
+        "Bilan DETERMINISTE de l'historique loggue : cadence, format et themes les plus engageants, meilleur post. Base uniquement sur les metriques saisies a la main (update_post_metrics) — aucune tendance inventee. Les memes signaux nourrissent get_playbook.",
+      inputSchema: {},
+    },
+    async () => {
+      const analysis = analyzePosts(await listPosts(ctx));
+      return { content: [{ type: "text", text: summarizeAnalysis(analysis) }] };
+    }
+  );
+
+  server.registerTool(
+    "update_post_metrics",
+    {
+      title: "Mettre a jour les metriques d'un post loggue",
+      description:
+        "Complete un post deja loggue (repere par son id 1-base, celui renvoye par log_post) avec ses metriques a jour, saisies a la main par le client. Jamais de chiffres inventes ni recuperes via l'API.",
+      inputSchema: {
+        id: z.number().int().positive().describe("id 1-base du post (renvoye par log_post, ordre de list_posts)"),
+        metriques: z
+          .object({
+            vues: z.number().optional(),
+            reactions: z.number().optional(),
+            commentaires: z.number().optional(),
+            reposts: z.number().optional(),
+            dm_recus: z.number().optional(),
+          })
+          .optional(),
+        resultat_business: z.string().optional(),
+        notes: z.string().optional(),
+      },
+    },
+    async ({ id, metriques, resultat_business, notes }) => {
+      const out = await updatePost(ctx, id, { metriques, resultat_business, notes });
+      if (!out.ok) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Post #${id} introuvable (${out.count} post(s) loggue(s)).` }],
+        };
+      }
+      return { content: [{ type: "text", text: `Post #${id} mis a jour.` }] };
+    }
+  );
+
+  server.registerTool(
+    "connect_linkedin",
+    {
+      title: "Connecter un compte LinkedIn (pour publier depuis Claude)",
+      description:
+        "Demarre l'autorisation LinkedIn : renvoie une URL a ouvrir dans un navigateur. Apres autorisation, le token LinkedIn du membre est stocke pour CE client et post_to_linkedin peut publier sur son profil. Publication uniquement apres validation humaine du texte.",
+      inputSchema: {},
+    },
+    async () => {
+      if (!isConfigured()) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: "LinkedIn non configure cote serveur (LINKEDIN_CLIENT_ID/SECRET absents)." },
+          ],
+        };
+      }
+      const existing = await getLinkedin(ctx);
+      const { url } = startLinkedinConnect(ctx.token);
+      const note = existing
+        ? `\n\n(Un compte est deja connecte : ${existing.name || "inconnu"}. Ouvrir ce lien le remplacera.)`
+        : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Ouvre ce lien dans un navigateur pour autoriser la publication sur ton profil LinkedIn (valable 10 min) :\n${url}\n\nUne fois l'autorisation faite, tu pourras publier avec post_to_linkedin.${note}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "post_to_linkedin",
+    {
+      title: "Publier un post sur LinkedIn (apres validation humaine)",
+      description:
+        "Publie le post sur le profil LinkedIn connecte (via connect_linkedin). Ne PUBLIE que du texte deja valide par le client (human-in-the-loop) — ne rien poster sans son accord explicite. Un 'visuel' optionnel rend une image on-brand jointe au post. Le post est ajoute au suivi automatiquement.",
+      inputSchema: {
+        texte: z.string().describe("le texte du post, deja valide par le client"),
+        visuel: slideShape.optional().describe("optionnel : une slide on-brand rendue en image et jointe au post"),
+      },
+    },
+    async ({ texte, visuel }) => {
+      try {
+        const { result, name } = await publishToLinkedin(ctx, texte, visuel, "post_to_linkedin");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Publie sur LinkedIn (${name || "profil connecte"}) et ajoute au suivi.${result.url ? `\n${result.url}` : ""}`,
+            },
+          ],
+        };
+      } catch (e) {
+        const msg =
+          e.kind === "no-linkedin"
+            ? "Aucun compte LinkedIn connecte. Lance d'abord connect_linkedin."
+            : `Publication echouee : ${String(e?.message || e)}`;
+        return { isError: true, content: [{ type: "text", text: msg }] };
+      }
+    }
+  );
+
+  server.registerTool(
+    "schedule_post",
+    {
+      title: "Planifier une publication LinkedIn",
+      description:
+        "Planifie la publication d'un post (texte deja valide par le client) a une heure ABSOLUE (ISO 8601, ex: 2026-09-20T09:00:00Z). Le serveur publiera automatiquement a l'heure prevue via le compte connecte. Le client valide le texte MAINTENANT (human-in-the-loop) ; la planification honore cet accord. Requiert connect_linkedin.",
+      inputSchema: {
+        texte: z.string().describe("le texte du post, deja valide par le client"),
+        when: z.string().describe("horodatage ISO 8601 absolu, ex: 2026-09-20T09:00:00Z"),
+        visuel: slideShape.optional().describe("optionnel : slide on-brand rendue en image et jointe"),
+      },
+    },
+    async ({ texte, when, visuel }) => {
+      if (!(await getLinkedin(ctx))) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: "Aucun compte LinkedIn connecte. Lance d'abord connect_linkedin." }],
+        };
+      }
+      const v = validateWhen(when);
+      if (!v.ok) return { isError: true, content: [{ type: "text", text: v.error }] };
+      const job = await addScheduledPost(ctx, { when: v.when, texte, visuel: visuel || null });
+      return {
+        content: [
+          { type: "text", text: `Post planifie pour le ${v.when} (id ${job.id}). Annulable via cancel_scheduled.` },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "list_scheduled",
+    {
+      title: "Lister les publications planifiees",
+      description: "Retourne les publications planifiees (en attente, envoyees, echouees, annulees) en JSON.",
+      inputSchema: {},
+    },
+    async () => {
+      const jobs = await listScheduled(ctx);
+      return { content: [{ type: "text", text: JSON.stringify(jobs, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "cancel_scheduled",
+    {
+      title: "Annuler une publication planifiee",
+      description: "Annule un post planifie encore en attente, repere par son id (cf. list_scheduled).",
+      inputSchema: { id: z.string().describe("id du job planifie") },
+    },
+    async ({ id }) => {
+      const out = await cancelScheduled(ctx, id);
+      return {
+        content: [
+          {
+            type: "text",
+            text: out.ok
+              ? `Publication planifiee ${id} annulee.`
+              : `Aucune publication planifiee en attente avec l'id ${id}.`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
     "delete_my_data",
     {
       title: "Supprimer toutes mes donnees (droit a l'effacement, RGPD art. 17)",
@@ -326,6 +607,38 @@ app.post("/authorize/consent", async (req, res) => {
   res.redirect(302, u.toString());
 });
 
+// Callback OAuth LinkedIn du flow MCP (connect_linkedin). On partage le meme
+// redirect_uri que la demo (pas de 2e URL a enregistrer dans le portail) : on
+// dispatche sur le prefixe du state. Si le state n'est PAS un flow MCP en cours,
+// on passe la main (next) au routeur demo, qui gere son propre callback de session.
+function callbackPage(title, bodyHtml) {
+  return `<!doctype html><meta charset="utf-8"><title>${title}</title>
+<body style="font-family:system-ui,sans-serif;background:#1A1A1A;color:#F2F2F2;display:flex;justify-content:center;padding:48px 16px">
+<div style="max-width:520px;background:#232323;border-radius:14px;padding:28px">${bodyHtml}</div></body>`;
+}
+
+app.get("/demo/linkedin/callback", async (req, res, next) => {
+  const { code, state, error, error_description } = req.query;
+  if (!isConnectState(state)) return next(); // flow demo (session) -> demoRouter
+  if (error) {
+    res.status(400).send(callbackPage("LinkedIn", `<h1>Autorisation refusee</h1><p>${error}: ${error_description || ""}</p>`));
+    return;
+  }
+  try {
+    const { client, name } = await completeLinkedinConnect({ code, state });
+    res.send(
+      callbackPage(
+        "LinkedIn connecte",
+        `<h1 style="color:#7DBE8A">✔ Compte LinkedIn connecte</h1>
+         <p>${name ? `<b>${name}</b> est connecte` : "Connexion reussie"} pour <b>${client}</b>.</p>
+         <p>Reviens dans Claude et utilise <b>post_to_linkedin</b> pour publier. Tu peux fermer cet onglet.</p>`
+      )
+    );
+  } catch (e) {
+    res.status(502).send(callbackPage("LinkedIn", `<h1 style="color:#D8A24A">Connexion echouee</h1><p>${String(e?.message || e)}</p>`));
+  }
+});
+
 // Surface web de démo (review LinkedIn) : /demo/*. Login de test + OAuth LinkedIn.
 app.use(demoRouter());
 
@@ -335,7 +648,73 @@ app.get("/health", async (_req, res) => {
 
 // Sessions Streamable HTTP : le client s'initialise (Bearer token verifie a ce
 // moment => identite figee pour la session), puis reutilise le mcp-session-id.
-const transports = {};
+// Le store borne la memoire : TTL d'inactivite (SESSION_TTL_MS) + plafond LRU
+// (SESSION_MAX). Sans ca, un client qui ne DELETE jamais sa session fuit lentement.
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 60 * 1000); // 30 min
+const SESSION_MAX = Number(process.env.SESSION_MAX || 1000);
+const SESSION_SWEEP_MS = Number(process.env.SESSION_SWEEP_MS || 60 * 1000); // 1 min
+const sessions = createSessionStore({ ttlMs: SESSION_TTL_MS, max: SESSION_MAX });
+
+function closeTransport(t) {
+  try {
+    t?.close?.();
+  } catch {
+    // fermeture best-effort : ne jamais faire tomber le sweeper
+  }
+}
+
+// Balayage periodique : ferme les sessions inactives depuis > TTL (leur onclose
+// les retire aussi du store, idempotent). unref() pour ne pas retenir l'event loop.
+const sweeper = setInterval(() => {
+  for (const { value } of sessions.reapExpired()) closeTransport(value);
+}, SESSION_SWEEP_MS);
+if (typeof sweeper.unref === "function") sweeper.unref();
+
+// Worker de planification : scanne periodiquement les jobs de TOUS les clients et
+// publie ceux arrivés à échéance via leur token LinkedIn stocké. Persisté sur disque
+// -> les jobs survivent à un redémarrage (repris au tick suivant). Un job échoué est
+// marqué "failed" (pas de retry infini) et reste visible via list_scheduled. Garde
+// de ré-entrance : un tick ne démarre jamais si le précédent tourne encore (évite
+// toute double publication). Le tick lui-même ne publie que des jobs "pending", et
+// marque chaque job AVANT de passer au suivant.
+const SCHEDULER_TICK_MS = Number(process.env.SCHEDULER_TICK_MS || 30 * 1000);
+let schedulerBusy = false;
+
+async function runScheduler() {
+  if (schedulerBusy || shuttingDown) return;
+  schedulerBusy = true;
+  try {
+    const now = Date.now();
+    for (const t of await listTokens()) {
+      const ctx = await resolveToken(t.token);
+      if (!ctx) continue;
+      for (const job of dueJobs(await listScheduled(ctx), now)) {
+        try {
+          const { result } = await publishToLinkedin(ctx, job.texte, job.visuel || undefined, "schedule_post");
+          await markScheduled(ctx, job.id, {
+            status: "sent",
+            sentAt: new Date().toISOString(),
+            url: result.url,
+            urn: result.id,
+          });
+        } catch (e) {
+          await markScheduled(ctx, job.id, {
+            status: "failed",
+            failedAt: new Date().toISOString(),
+            error: String(e?.message || e),
+          });
+        }
+      }
+    }
+  } finally {
+    schedulerBusy = false;
+  }
+}
+
+const scheduler = setInterval(() => {
+  runScheduler().catch(() => {});
+}, SCHEDULER_TICK_MS);
+if (typeof scheduler.unref === "function") scheduler.unref();
 
 async function tokenCtx(req) {
   const auth = req.headers.authorization || "";
@@ -346,7 +725,7 @@ async function tokenCtx(req) {
 
 app.post("/mcp", async (req, res) => {
   const sid = req.headers["mcp-session-id"];
-  let transport = sid ? transports[sid] : undefined;
+  let transport = sid ? sessions.get(sid) : undefined; // get() rafraichit l'activite
 
   if (!transport) {
     if (sid || !isInitializeRequest(req.body)) {
@@ -359,14 +738,16 @@ app.post("/mcp", async (req, res) => {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+    // Avant d'ajouter : evince les plus anciennes si on depasse le plafond (LRU).
+    for (const { value } of sessions.reapOverflow()) closeTransport(value);
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
-        transports[id] = transport;
+        sessions.set(id, transport);
       },
     });
     transport.onclose = () => {
-      if (transport.sessionId) delete transports[transport.sessionId];
+      if (transport.sessionId) sessions.delete(transport.sessionId);
     };
     const server = buildServer(ctx);
     await server.connect(transport);
@@ -382,7 +763,7 @@ app.post("/mcp", async (req, res) => {
 // GET = flux SSE serveur->client ; DELETE = fin de session.
 async function replaySession(req, res) {
   const sid = req.headers["mcp-session-id"];
-  const transport = sid ? transports[sid] : undefined;
+  const transport = sid ? sessions.get(sid) : undefined; // get() rafraichit l'activite
   if (!transport) {
     res.status(400).send("no valid session");
     return;
@@ -415,6 +796,8 @@ async function gracefulShutdown(signal) {
   const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS + 1000);
   if (typeof hardExit.unref === "function") hardExit.unref();
   try {
+    clearInterval(sweeper); // stoppe le balayage des sessions
+    clearInterval(scheduler); // stoppe le worker de planification
     beginShutdown(); // (1) plus de nouveau rendu, la file est rejetee
     httpServer.close(); // (2) on n'accepte plus de connexions
     // (3) on laisse finir les rendus en vol, borne par le delai de grace

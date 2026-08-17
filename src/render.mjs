@@ -55,6 +55,16 @@ export function activeRenderCount() {
   return children.size;
 }
 
+// Compteur de tentatives de spawn (couture de test) : incremente a CHAQUE run(),
+// de facon synchrone et deterministe — independant du temps de boot du process
+// fils. Permet de verifier la logique de retry (ex : timeout => 2 tentatives) sans
+// dependre du timing du faux chrome (qui, sous charge, peut etre tue avant meme
+// d'avoir loggue son demarrage). Sans usage en prod.
+let spawnAttempts = 0;
+export function _spawnAttempts() {
+  return spawnAttempts;
+}
+
 // Debut d'arret (appele en premier par le handler SIGTERM) : bloque tout nouveau
 // rendu et rejette VITE ceux en file (pas encore demarres), SANS tuer ceux en vol
 // -> on leur laisse le delai de grace du serveur pour finir proprement. Idempotent.
@@ -119,6 +129,7 @@ function killGroup(p) {
 }
 
 function run(bin, args) {
+  spawnAttempts++; // compte l'essai (synchrone) avant tout alea de boot du fils
   return new Promise((resolve, reject) => {
     let p;
     try {

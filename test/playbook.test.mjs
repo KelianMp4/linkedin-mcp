@@ -31,3 +31,14 @@ test("sans identite, le playbook renvoie vers setup_brand (_default)", () => {
   const out = playbook({ client: "X", voice: {}, _default: true });
   assert.ok(out.includes("setup_brand"));
 });
+
+test("le playbook injecte les insights d'historique quand fournis", () => {
+  const out = playbook({ client: "X", voice: {} }, ["Format gagnant : carrousel.", "Thème : preuve."]);
+  assert.ok(out.includes("Ce qui marche pour TOI"));
+  assert.ok(out.includes("Format gagnant : carrousel."));
+});
+
+test("sans insights, aucune section historique (retrocompat 1 argument)", () => {
+  const out = playbook({ client: "X", voice: {} });
+  assert.ok(!out.includes("Ce qui marche pour TOI"));
+});
