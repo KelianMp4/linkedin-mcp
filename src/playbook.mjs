@@ -1,6 +1,8 @@
 // Methode de redaction fournie au Claude du client (il redige, pas le serveur).
 // Module a part = pur et testable, sans demarrer le serveur HTTP.
-export function playbook(brand) {
+// `insights` (optionnel) : liste de recos tirees de l'historique (cf. analyze.mjs) —
+// injectees telles quelles pour que le client ecrive a partir de ses propres resultats.
+export function playbook(brand, insights = null) {
   const v = brand.voice || {};
   const p = v.produit || {};
   const lines = [
@@ -42,6 +44,9 @@ export function playbook(brand) {
     `Apres publication, loggue avec log_post (metriques saisies a la main, jamais inventees) ;`,
     `  complete-les plus tard avec update_post_metrics.`
   );
+  if (insights && insights.length) {
+    lines.push(``, `# Ce qui marche pour TOI (tire de ton historique)`, ...insights.map((i) => `- ${i}`));
+  }
   if (brand._default) {
     lines.push(
       ``,

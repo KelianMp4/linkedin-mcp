@@ -19,6 +19,18 @@ versionnement [SemVer](https://semver.org/lang/fr/).
   (patch partiel par fusion profonde, version précédente archivée).
 - **`update_post_metrics`** : compléter après coup les métriques d'un post déjà loggé
   (saisies à la main, jamais inventées).
+- **`analyze_posts`** : bilan déterministe de l'historique (cadence, format et thèmes
+  les plus engageants, meilleur post), basé uniquement sur les métriques saisies —
+  aucune tendance inventée, et rien tant qu'il n'y a pas assez de données. Les mêmes
+  signaux nourrissent `get_playbook` (« ce qui marche pour toi »), pour que le contenu
+  s'améliore à partir des résultats réels du client.
+
+### Interne
+- **Sessions MCP bornées** : expiration d'inactivité + plafond LRU sur la table des
+  sessions (ferme une fuite mémoire lente sur serveur long-vivant). Configurable par
+  `SESSION_TTL_MS` / `SESSION_MAX` / `SESSION_SWEEP_MS`.
+- **Test de rendu dé-flaké** : le retry sur timeout est vérifié via un compteur
+  côté rendu (déterministe), plus via le timing du process fils.
 
 ### Notes
 - Toujours aucune dépendance ajoutée.

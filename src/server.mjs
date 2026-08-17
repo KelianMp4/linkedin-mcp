@@ -19,6 +19,7 @@ import { render, beginShutdown, shutdownRenders, activeRenderCount } from "./ren
 import { registerFont } from "./fonts.mjs";
 import { playbook } from "./playbook.mjs";
 import { lintPost } from "./lint.mjs";
+import { analyzePosts, summarizeAnalysis, playbookInsights } from "./analyze.mjs";
 import { createOAuth } from "./oauth.mjs";
 import { demoRouter } from "./demo.mjs";
 import { isConfigured, publishText, publishImage } from "./linkedin.mjs";
@@ -142,7 +143,9 @@ function buildServer(ctx) {
     },
     async () => {
       const brand = await getBrand(ctx);
-      return { content: [{ type: "text", text: playbook(brand) }] };
+      // Valeur composee : on injecte les recos tirees de l'historique du client.
+      const insights = playbookInsights(analyzePosts(await listPosts(ctx)));
+      return { content: [{ type: "text", text: playbook(brand, insights) }] };
     }
   );
 
@@ -293,6 +296,20 @@ function buildServer(ctx) {
     async () => {
       const hist = await listPosts(ctx);
       return { content: [{ type: "text", text: JSON.stringify(hist, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "analyze_posts",
+    {
+      title: "Analyser le suivi (ce qui marche)",
+      description:
+        "Bilan DETERMINISTE de l'historique loggue : cadence, format et themes les plus engageants, meilleur post. Base uniquement sur les metriques saisies a la main (update_post_metrics) — aucune tendance inventee. Les memes signaux nourrissent get_playbook.",
+      inputSchema: {},
+    },
+    async () => {
+      const analysis = analyzePosts(await listPosts(ctx));
+      return { content: [{ type: "text", text: summarizeAnalysis(analysis) }] };
     }
   );
 
