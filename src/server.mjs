@@ -23,6 +23,7 @@ import { createOAuth } from "./oauth.mjs";
 import { demoRouter } from "./demo.mjs";
 import { isConfigured, publishText, publishImage } from "./linkedin.mjs";
 import { startLinkedinConnect, completeLinkedinConnect, isConnectState } from "./connect.mjs";
+import { createSessionStore } from "./sessions.mjs";
 import {
   resolveToken,
   getBrand,
@@ -549,7 +550,27 @@ app.get("/health", async (_req, res) => {
 
 // Sessions Streamable HTTP : le client s'initialise (Bearer token verifie a ce
 // moment => identite figee pour la session), puis reutilise le mcp-session-id.
-const transports = {};
+// Le store borne la memoire : TTL d'inactivite (SESSION_TTL_MS) + plafond LRU
+// (SESSION_MAX). Sans ca, un client qui ne DELETE jamais sa session fuit lentement.
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 60 * 1000); // 30 min
+const SESSION_MAX = Number(process.env.SESSION_MAX || 1000);
+const SESSION_SWEEP_MS = Number(process.env.SESSION_SWEEP_MS || 60 * 1000); // 1 min
+const sessions = createSessionStore({ ttlMs: SESSION_TTL_MS, max: SESSION_MAX });
+
+function closeTransport(t) {
+  try {
+    t?.close?.();
+  } catch {
+    // fermeture best-effort : ne jamais faire tomber le sweeper
+  }
+}
+
+// Balayage periodique : ferme les sessions inactives depuis > TTL (leur onclose
+// les retire aussi du store, idempotent). unref() pour ne pas retenir l'event loop.
+const sweeper = setInterval(() => {
+  for (const { value } of sessions.reapExpired()) closeTransport(value);
+}, SESSION_SWEEP_MS);
+if (typeof sweeper.unref === "function") sweeper.unref();
 
 async function tokenCtx(req) {
   const auth = req.headers.authorization || "";
@@ -560,7 +581,7 @@ async function tokenCtx(req) {
 
 app.post("/mcp", async (req, res) => {
   const sid = req.headers["mcp-session-id"];
-  let transport = sid ? transports[sid] : undefined;
+  let transport = sid ? sessions.get(sid) : undefined; // get() rafraichit l'activite
 
   if (!transport) {
     if (sid || !isInitializeRequest(req.body)) {
@@ -573,14 +594,16 @@ app.post("/mcp", async (req, res) => {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+    // Avant d'ajouter : evince les plus anciennes si on depasse le plafond (LRU).
+    for (const { value } of sessions.reapOverflow()) closeTransport(value);
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
-        transports[id] = transport;
+        sessions.set(id, transport);
       },
     });
     transport.onclose = () => {
-      if (transport.sessionId) delete transports[transport.sessionId];
+      if (transport.sessionId) sessions.delete(transport.sessionId);
     };
     const server = buildServer(ctx);
     await server.connect(transport);
@@ -596,7 +619,7 @@ app.post("/mcp", async (req, res) => {
 // GET = flux SSE serveur->client ; DELETE = fin de session.
 async function replaySession(req, res) {
   const sid = req.headers["mcp-session-id"];
-  const transport = sid ? transports[sid] : undefined;
+  const transport = sid ? sessions.get(sid) : undefined; // get() rafraichit l'activite
   if (!transport) {
     res.status(400).send("no valid session");
     return;
@@ -629,6 +652,7 @@ async function gracefulShutdown(signal) {
   const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS + 1000);
   if (typeof hardExit.unref === "function") hardExit.unref();
   try {
+    clearInterval(sweeper); // stoppe le balayage des sessions
     beginShutdown(); // (1) plus de nouveau rendu, la file est rejetee
     httpServer.close(); // (2) on n'accepte plus de connexions
     // (3) on laisse finir les rendus en vol, borne par le delai de grace
