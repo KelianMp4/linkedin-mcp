@@ -24,16 +24,55 @@ function fileUrl(path) {
   return `file://${String(path).replace(/\\/g, "/")}`;
 }
 
-// slide = { titre?, corps?, chiffre?, note?, cta? }
+// Gabarits de slide : chaque variante met en avant un type de contenu. Le gabarit
+// est explicite (slide.layout) ou auto-detecte selon les champs presents. Le style
+// de chaque variante est porte par le selecteur .slide[data-layout="..."] en CSS.
+const LAYOUTS = new Set(["hook", "stat", "quote", "list", "cta", "default"]);
+
+function pickLayout(slide) {
+  if (slide.layout && LAYOUTS.has(slide.layout)) return slide.layout;
+  if (Array.isArray(slide.puces) && slide.puces.length) return "list";
+  if (slide.chiffre && !slide.corps) return "stat"; // un chiffre qui domine
+  if (slide.cta && !slide.corps && !slide.chiffre && !slide.titre) return "cta";
+  if (slide.titre && !slide.corps && !slide.chiffre && !slide.cta) return "hook"; // accroche seule
+  return "default";
+}
+
+// slide = { titre?, corps?, chiffre?, note?, cta?, puces?, layout? }
 function renderSlide(slide) {
+  const layout = pickLayout(slide);
   const parts = [];
-  if (slide.chiffre) parts.push(`<div class="chiffre">${esc(slide.chiffre)}</div>`);
-  if (slide.titre) parts.push(`<h1>${esc(slide.titre)}</h1>`);
-  if (slide.corps) parts.push(`<p>${esc(slide.corps)}</p>`);
-  if (slide.cta) parts.push(`<div class="cta">${esc(slide.cta)}</div>`);
+  if (layout === "stat") {
+    if (slide.chiffre) parts.push(`<div class="chiffre">${esc(slide.chiffre)}</div>`);
+    if (slide.titre) parts.push(`<div class="stat-label">${esc(slide.titre)}</div>`);
+    if (slide.corps) parts.push(`<p>${esc(slide.corps)}</p>`);
+  } else if (layout === "quote") {
+    if (slide.corps) parts.push(`<blockquote>${esc(slide.corps)}</blockquote>`);
+    if (slide.titre) parts.push(`<div class="cite">${esc(slide.titre)}</div>`);
+  } else if (layout === "list") {
+    if (slide.titre) parts.push(`<h1>${esc(slide.titre)}</h1>`);
+    if (Array.isArray(slide.puces) && slide.puces.length) {
+      parts.push(`<ul class="puces">${slide.puces.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
+    }
+    if (slide.corps) parts.push(`<p>${esc(slide.corps)}</p>`);
+  } else if (layout === "hook") {
+    if (slide.chiffre) parts.push(`<div class="chiffre">${esc(slide.chiffre)}</div>`);
+    if (slide.titre) parts.push(`<h1>${esc(slide.titre)}</h1>`);
+  } else if (layout === "cta") {
+    if (slide.titre) parts.push(`<h1>${esc(slide.titre)}</h1>`);
+    if (slide.corps) parts.push(`<p>${esc(slide.corps)}</p>`);
+    if (slide.cta) parts.push(`<div class="cta">${esc(slide.cta)}</div>`);
+  } else {
+    // default : ordre historique (retrocompat exacte).
+    if (slide.chiffre) parts.push(`<div class="chiffre">${esc(slide.chiffre)}</div>`);
+    if (slide.titre) parts.push(`<h1>${esc(slide.titre)}</h1>`);
+    if (slide.corps) parts.push(`<p>${esc(slide.corps)}</p>`);
+    if (slide.cta) parts.push(`<div class="cta">${esc(slide.cta)}</div>`);
+  }
   if (slide.note) parts.push(`<div class="note">${esc(slide.note)}</div>`);
-  // .fit = conteneur mesure par l'auto-fit (scrollHeight vs hauteur slide).
-  return `<div class="slide"><div class="fit">${parts.join("\n")}</div></div>`;
+  // class="slide" conserve tel quel (autres modules/tests en dependent) ; le gabarit
+  // passe par data-layout. .fit = conteneur mesure par l'auto-fit (scrollHeight).
+  return `<div class="slide" data-layout="${layout}"><div class="fit">${parts.join("\n")}</div></div>`;
 }
 
 // @font-face pour les polices locales du client. Genere une famille par role
@@ -101,6 +140,49 @@ export function buildHtml(slides, visual, fontsDir) {
     margin-top: 40px; font-size: calc(44px * var(--scale)); font-weight: 800; color: ${v.accent};
   }
   .note { margin-top: 32px; font-size: calc(30px * var(--scale)); opacity: 0.6; }
+
+  /* --- Gabarits par slide (data-layout) --- */
+  /* hook : accroche seule, centree, plus grosse, une barre d'accent. */
+  .slide[data-layout="hook"] { text-align: center; }
+  .slide[data-layout="hook"] .fit { align-items: center; }
+  .slide[data-layout="hook"] h1 { font-size: calc(104px * var(--scale)); line-height: 1.03; }
+  .slide[data-layout="hook"] h1::after {
+    content: ""; display: block; width: 120px; height: 10px; border-radius: 6px;
+    background: ${v.accent}; margin: 40px auto 0;
+  }
+  /* stat : le chiffre domine, le titre devient un label sous le chiffre. */
+  .slide[data-layout="stat"] { text-align: center; }
+  .slide[data-layout="stat"] .fit { align-items: center; }
+  .slide[data-layout="stat"] .chiffre { font-size: calc(300px * var(--scale)); margin-bottom: 8px; }
+  .stat-label {
+    font-family: ${titleStack};
+    font-size: calc(52px * var(--scale)); line-height: 1.15; font-weight: 700; opacity: 0.95;
+  }
+  /* quote : citation large, guillemet d'accent, source discrete. */
+  .slide[data-layout="quote"] blockquote {
+    position: relative; font-family: ${titleStack};
+    font-size: calc(64px * var(--scale)); line-height: 1.18; font-style: italic; padding-left: 8px;
+  }
+  .slide[data-layout="quote"] blockquote::before {
+    content: "\\201C"; color: ${v.accent}; font-size: calc(160px * var(--scale));
+    line-height: 0.1; position: absolute; left: -6px; top: 46px; opacity: 0.85;
+  }
+  .cite { margin-top: 36px; font-size: calc(34px * var(--scale)); font-weight: 700; color: ${v.accent}; }
+  /* list : puces avec un marqueur d'accent, generees ligne par ligne. */
+  ul.puces { list-style: none; margin-top: 8px; }
+  ul.puces li {
+    position: relative; padding-left: 52px; margin-bottom: 28px;
+    font-size: calc(42px * var(--scale)); line-height: 1.28;
+  }
+  ul.puces li::before {
+    content: ""; position: absolute; left: 0; top: calc(18px * var(--scale));
+    width: calc(26px * var(--scale)); height: calc(8px * var(--scale));
+    border-radius: 5px; background: ${v.accent};
+  }
+  /* cta : appel a l'action centre et proeminent. */
+  .slide[data-layout="cta"] { text-align: center; }
+  .slide[data-layout="cta"] .fit { align-items: center; }
+  .slide[data-layout="cta"] .cta { font-size: calc(56px * var(--scale)); margin-top: 48px; }
 </style></head><body>
 ${body}
 <script>

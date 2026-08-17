@@ -24,6 +24,10 @@ versionnement [SemVer](https://semver.org/lang/fr/).
   aucune tendance inventée, et rien tant qu'il n'y a pas assez de données. Les mêmes
   signaux nourrissent `get_playbook` (« ce qui marche pour toi »), pour que le contenu
   s'améliore à partir des résultats réels du client.
+- **Gabarits de slide** (`layout`) pour les visuels : `hook` (accroche), `stat`
+  (chiffre qui domine), `quote` (citation), `list` (puces via le champ `puces`), `cta`,
+  `default`. Auto-détecté selon les champs fournis, ou explicite. L'auto-fit anti-coupe
+  s'applique à chaque variante.
 
 ### Interne
 - **Sessions MCP bornées** : expiration d'inactivité + plafond LRU sur la table des

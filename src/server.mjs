@@ -51,6 +51,11 @@ const slideShape = z.object({
   chiffre: z.string().optional().describe("chiffre cle mis en avant"),
   cta: z.string().optional(),
   note: z.string().optional(),
+  puces: z.array(z.string()).optional().describe("liste a puces (utilise le gabarit list)"),
+  layout: z
+    .enum(["hook", "stat", "quote", "list", "cta", "default"])
+    .optional()
+    .describe("gabarit visuel : hook (accroche), stat (chiffre), quote (citation), list (puces), cta, default. Auto-detecte si absent."),
 });
 
 const brandInput = z.object({
