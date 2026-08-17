@@ -32,7 +32,15 @@ export function playbook(brand) {
     `Police on-brand : si le brand book indique une police precise, appelle register_font`,
     `  une fois par role (title / body) — source = nom de famille Google Fonts OU URL https`,
     `  du fichier. Sans ca, les visuels sortent en police systeme neutre.`,
-    `Apres publication, loggue avec log_post (metriques saisies a la main, jamais inventees).`
+    ``,
+    `# Avant de publier`,
+    `Passe le brouillon a lint_post : il verifie mecaniquement ces regles (accroche,`,
+    `  pas de lien dans le corps, pas de tiret cadratin, repere de coupe). Corrige les`,
+    `  erreurs bloquantes avant d'aller plus loin.`,
+    `Publication : si le client a connecte son compte (connect_linkedin), publie avec`,
+    `  post_to_linkedin APRES qu'il a valide le texte (jamais sans son accord explicite).`,
+    `Apres publication, loggue avec log_post (metriques saisies a la main, jamais inventees) ;`,
+    `  complete-les plus tard avec update_post_metrics.`
   );
   if (brand._default) {
     lines.push(

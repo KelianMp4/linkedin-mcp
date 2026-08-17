@@ -18,15 +18,21 @@ import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { render, beginShutdown, shutdownRenders, activeRenderCount } from "./render.mjs";
 import { registerFont } from "./fonts.mjs";
 import { playbook } from "./playbook.mjs";
+import { lintPost } from "./lint.mjs";
 import { createOAuth } from "./oauth.mjs";
 import { demoRouter } from "./demo.mjs";
+import { isConfigured, publishText, publishImage } from "./linkedin.mjs";
+import { startLinkedinConnect, completeLinkedinConnect, isConnectState } from "./connect.mjs";
 import {
   resolveToken,
   getBrand,
   setBrand,
+  updateBrand,
   updateVisual,
   appendPost,
   listPosts,
+  updatePost,
+  getLinkedin,
   listTokens,
   deleteClientData,
   DATA_DIR,
@@ -140,6 +146,59 @@ function buildServer(ctx) {
   );
 
   server.registerTool(
+    "lint_post",
+    {
+      title: "Verifier un post avant publication (regles de canal)",
+      description:
+        "Controle DETERMINISTE d'un brouillon de post LinkedIn : accroche en 1re ligne, aucun lien dans le corps, pas de tiret cadratin (signature IA), repere de coupe (~210 car). Aucun texte genere : renvoie les problemes a corriger. Appelle ceci AVANT de publier.",
+      inputSchema: { texte: z.string().describe("le brouillon de post a verifier") },
+    },
+    async ({ texte }) => {
+      const r = lintPost(texte);
+      const head = r.ok
+        ? r.warnings
+          ? `✅ Aucune erreur bloquante, ${r.warnings} avertissement(s) a corriger.`
+          : "✅ Post conforme aux regles de canal."
+        : `❌ ${r.errors} probleme(s) bloquant(s), ${r.warnings} avertissement(s).`;
+      const list = r.issues.map((i) => `- [${i.level}] ${i.rule} : ${i.message}`);
+      const stats = `Stats : ${r.stats.chars} car, accroche ${r.stats.firstLineChars} car, coupe ~${r.stats.foldAt} car.`;
+      return { content: [{ type: "text", text: [head, ...list, "", stats].join("\n") }] };
+    }
+  );
+
+  server.registerTool(
+    "get_brand",
+    {
+      title: "Lire l'identite de marque enregistree",
+      description:
+        "Retourne l'identite de marque stockee (voix + charte visuelle) en JSON. Pratique avant un update_brand pour voir l'existant, ou pour verifier la config.",
+      inputSchema: {},
+    },
+    async () => {
+      const brand = await getBrand(ctx);
+      return { content: [{ type: "text", text: JSON.stringify(brand, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "update_brand",
+    {
+      title: "Mettre a jour l'identite de marque (patch partiel)",
+      description:
+        "Applique un patch partiel a l'identite de marque : ne fournis QUE les champs a changer (fusion profonde, le reste est conserve). La version precedente est archivee. Utilise get_brand d'abord pour voir l'existant.",
+      inputSchema: brandInput.shape,
+    },
+    async (patch) => {
+      const saved = await updateBrand(ctx, patch);
+      return {
+        content: [
+          { type: "text", text: `Identite mise a jour pour ${saved.client} (version precedente archivee).` },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
     "render_carousel",
     {
       title: "Rendu carrousel (PDF multi-pages on-brand)",
@@ -237,6 +296,129 @@ function buildServer(ctx) {
   );
 
   server.registerTool(
+    "update_post_metrics",
+    {
+      title: "Mettre a jour les metriques d'un post loggue",
+      description:
+        "Complete un post deja loggue (repere par son id 1-base, celui renvoye par log_post) avec ses metriques a jour, saisies a la main par le client. Jamais de chiffres inventes ni recuperes via l'API.",
+      inputSchema: {
+        id: z.number().int().positive().describe("id 1-base du post (renvoye par log_post, ordre de list_posts)"),
+        metriques: z
+          .object({
+            vues: z.number().optional(),
+            reactions: z.number().optional(),
+            commentaires: z.number().optional(),
+            reposts: z.number().optional(),
+            dm_recus: z.number().optional(),
+          })
+          .optional(),
+        resultat_business: z.string().optional(),
+        notes: z.string().optional(),
+      },
+    },
+    async ({ id, metriques, resultat_business, notes }) => {
+      const out = await updatePost(ctx, id, { metriques, resultat_business, notes });
+      if (!out.ok) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Post #${id} introuvable (${out.count} post(s) loggue(s)).` }],
+        };
+      }
+      return { content: [{ type: "text", text: `Post #${id} mis a jour.` }] };
+    }
+  );
+
+  server.registerTool(
+    "connect_linkedin",
+    {
+      title: "Connecter un compte LinkedIn (pour publier depuis Claude)",
+      description:
+        "Demarre l'autorisation LinkedIn : renvoie une URL a ouvrir dans un navigateur. Apres autorisation, le token LinkedIn du membre est stocke pour CE client et post_to_linkedin peut publier sur son profil. Publication uniquement apres validation humaine du texte.",
+      inputSchema: {},
+    },
+    async () => {
+      if (!isConfigured()) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: "LinkedIn non configure cote serveur (LINKEDIN_CLIENT_ID/SECRET absents)." },
+          ],
+        };
+      }
+      const existing = await getLinkedin(ctx);
+      const { url } = startLinkedinConnect(ctx.token);
+      const note = existing
+        ? `\n\n(Un compte est deja connecte : ${existing.name || "inconnu"}. Ouvrir ce lien le remplacera.)`
+        : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Ouvre ce lien dans un navigateur pour autoriser la publication sur ton profil LinkedIn (valable 10 min) :\n${url}\n\nUne fois l'autorisation faite, tu pourras publier avec post_to_linkedin.${note}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "post_to_linkedin",
+    {
+      title: "Publier un post sur LinkedIn (apres validation humaine)",
+      description:
+        "Publie le post sur le profil LinkedIn connecte (via connect_linkedin). Ne PUBLIE que du texte deja valide par le client (human-in-the-loop) — ne rien poster sans son accord explicite. Un 'visuel' optionnel rend une image on-brand jointe au post. Le post est ajoute au suivi automatiquement.",
+      inputSchema: {
+        texte: z.string().describe("le texte du post, deja valide par le client"),
+        visuel: slideShape.optional().describe("optionnel : une slide on-brand rendue en image et jointe au post"),
+      },
+    },
+    async ({ texte, visuel }) => {
+      const li = await getLinkedin(ctx);
+      if (!li) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: "Aucun compte LinkedIn connecte. Lance d'abord connect_linkedin." },
+          ],
+        };
+      }
+      try {
+        let result;
+        if (visuel) {
+          const brand = await getBrand(ctx);
+          const out = await render([visuel], brand.visual, "png", join(ctx.dir, "fonts"));
+          const img = Buffer.from(out.base64, "base64");
+          result = await publishImage(li.accessToken, li.urn, texte, img, "image/png");
+        } else {
+          result = await publishText(li.accessToken, li.urn, texte);
+        }
+        // Ajout au suivi (metriques laissees vides : saisies a la main plus tard).
+        await appendPost(ctx, {
+          date: new Date().toISOString().slice(0, 10),
+          theme: texte.split(/\r?\n/)[0].slice(0, 80),
+          format: visuel ? "image" : "texte",
+          url: result.url,
+          urn: result.id,
+          source: "post_to_linkedin",
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Publie sur LinkedIn (${li.name || "profil connecte"}) et ajoute au suivi.${result.url ? `\n${result.url}` : ""}`,
+            },
+          ],
+        };
+      } catch (e) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Publication echouee : ${String(e?.message || e)}` }],
+        };
+      }
+    }
+  );
+
+  server.registerTool(
     "delete_my_data",
     {
       title: "Supprimer toutes mes donnees (droit a l'effacement, RGPD art. 17)",
@@ -324,6 +506,38 @@ app.post("/authorize/consent", async (req, res) => {
   u.searchParams.set("code", out.code);
   if (out.state) u.searchParams.set("state", out.state);
   res.redirect(302, u.toString());
+});
+
+// Callback OAuth LinkedIn du flow MCP (connect_linkedin). On partage le meme
+// redirect_uri que la demo (pas de 2e URL a enregistrer dans le portail) : on
+// dispatche sur le prefixe du state. Si le state n'est PAS un flow MCP en cours,
+// on passe la main (next) au routeur demo, qui gere son propre callback de session.
+function callbackPage(title, bodyHtml) {
+  return `<!doctype html><meta charset="utf-8"><title>${title}</title>
+<body style="font-family:system-ui,sans-serif;background:#1A1A1A;color:#F2F2F2;display:flex;justify-content:center;padding:48px 16px">
+<div style="max-width:520px;background:#232323;border-radius:14px;padding:28px">${bodyHtml}</div></body>`;
+}
+
+app.get("/demo/linkedin/callback", async (req, res, next) => {
+  const { code, state, error, error_description } = req.query;
+  if (!isConnectState(state)) return next(); // flow demo (session) -> demoRouter
+  if (error) {
+    res.status(400).send(callbackPage("LinkedIn", `<h1>Autorisation refusee</h1><p>${error}: ${error_description || ""}</p>`));
+    return;
+  }
+  try {
+    const { client, name } = await completeLinkedinConnect({ code, state });
+    res.send(
+      callbackPage(
+        "LinkedIn connecte",
+        `<h1 style="color:#7DBE8A">✔ Compte LinkedIn connecte</h1>
+         <p>${name ? `<b>${name}</b> est connecte` : "Connexion reussie"} pour <b>${client}</b>.</p>
+         <p>Reviens dans Claude et utilise <b>post_to_linkedin</b> pour publier. Tu peux fermer cet onglet.</p>`
+      )
+    );
+  } catch (e) {
+    res.status(502).send(callbackPage("LinkedIn", `<h1 style="color:#D8A24A">Connexion echouee</h1><p>${String(e?.message || e)}</p>`));
+  }
 });
 
 // Surface web de démo (review LinkedIn) : /demo/*. Login de test + OAuth LinkedIn.

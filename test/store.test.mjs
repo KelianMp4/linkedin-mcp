@@ -89,6 +89,70 @@ test("deleteClientData sur token inconnu ne casse pas (removed=false)", async ()
   assert.equal(out.client, null);
 });
 
+test("updateBrand : patch partiel fusionne sans ecraser + archive l'ancienne version", async () => {
+  const t = await store.mintToken("Patch");
+  const ctx = await store.resolveToken(t);
+  await store.setBrand(ctx, {
+    voice: { registre: "sobre", produit: { nom: "P", prix: "49" } },
+    visual: { bg: "#000", fg: "#fff" },
+  });
+
+  await store.updateBrand(ctx, { voice: { produit: { prix: "59" } }, visual: { accent: "#f00" } });
+
+  const b = await store.getBrand(ctx);
+  assert.equal(b.voice.registre, "sobre", "champ non touche conserve");
+  assert.equal(b.voice.produit.nom, "P", "sous-objet non touche conserve");
+  assert.equal(b.voice.produit.prix, "59", "champ imbrique patche");
+  assert.equal(b.visual.bg, "#000");
+  assert.equal(b.visual.accent, "#f00");
+  assert.ok(b.updatedAt, "updatedAt pose");
+
+  // Version precedente archivee.
+  const hist = await import("node:fs/promises").then((fs) =>
+    fs.readFile(join(ctx.dir, "brand_history.json"), "utf8")
+  );
+  const arr = JSON.parse(hist);
+  assert.equal(arr.length, 1);
+  assert.equal(arr[0].brand.voice.produit.prix, "49");
+});
+
+test("updatePost : met a jour les metriques d'un post loggue par id", async () => {
+  const t = await store.mintToken("Metrics");
+  const ctx = await store.resolveToken(t);
+  await store.appendPost(ctx, { date: "2026-09-01", theme: "lancement" });
+
+  const out = await store.updatePost(ctx, 1, { metriques: { vues: 1200, reactions: 40 }, resultat_business: "3 DM" });
+  assert.equal(out.ok, true);
+  const hist = await store.listPosts(ctx);
+  assert.equal(hist[0].metriques.vues, 1200);
+  assert.equal(hist[0].metriques.reactions, 40);
+  assert.equal(hist[0].resultat_business, "3 DM");
+  assert.equal(hist[0].theme, "lancement", "champs existants conserves");
+});
+
+test("updatePost : id hors bornes -> ok=false", async () => {
+  const t = await store.mintToken("MetricsKo");
+  const ctx = await store.resolveToken(t);
+  await store.appendPost(ctx, { date: "2026-09-01", theme: "x" });
+  const out = await store.updatePost(ctx, 9, { metriques: { vues: 1 } });
+  assert.equal(out.ok, false);
+  assert.equal(out.count, 1);
+});
+
+test("setLinkedin/getLinkedin : roundtrip, efface avec le dossier client", async () => {
+  const t = await store.mintToken("LI");
+  const ctx = await store.resolveToken(t);
+  assert.equal(await store.getLinkedin(ctx), null);
+  await store.setLinkedin(ctx, { accessToken: "AT", urn: "urn:li:person:z", name: "N" });
+  const li = await store.getLinkedin(ctx);
+  assert.equal(li.accessToken, "AT");
+  assert.equal(li.urn, "urn:li:person:z");
+
+  // Le droit a l'effacement emporte aussi linkedin.json (efface tout le dossier).
+  await store.deleteClientData(t);
+  assert.equal(await store.resolveToken(t), null);
+});
+
 // --- Concurrence : le mutex par token empeche les pertes d'ecriture ---
 
 test("CONCURRENCE : N appends simultanes ne perdent aucune entree", async () => {

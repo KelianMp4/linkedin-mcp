@@ -4,6 +4,27 @@ Toutes les évolutions notables de ce projet sont documentées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/) ;
 versionnement [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+- **Publication LinkedIn depuis le MCP** : deux outils `connect_linkedin` et
+  `post_to_linkedin`. `connect_linkedin` renvoie une URL d'autorisation ; après
+  accord du membre, son jeton LinkedIn est stocké **par client** (isolé, 0600) et
+  `post_to_linkedin` publie sur son profil (texte ou visuel on-brand), uniquement
+  après validation humaine du texte. Le post est ajouté au suivi automatiquement.
+- **`lint_post`** : vérification déterministe d'un brouillon avant publication —
+  accroche en 1ʳᵉ ligne, aucun lien dans le corps, pas de tiret cadratin, repère de
+  coupe (~210 car). Aucun texte généré côté serveur : renvoie les corrections à faire.
+- **CRUD identité de marque** : `get_brand` (lire l'identité stockée), `update_brand`
+  (patch partiel par fusion profonde, version précédente archivée).
+- **`update_post_metrics`** : compléter après coup les métriques d'un post déjà loggé
+  (saisies à la main, jamais inventées).
+
+### Notes
+- Toujours aucune dépendance ajoutée.
+- Le playbook renvoie désormais vers `lint_post` avant publication (source unique des
+  règles de canal, vérifiées mécaniquement).
+
 ## [1.0.0] - 2026-08-10
 
 Première version stable — **beta ouverte**. Durcissement du moteur pour un usage
