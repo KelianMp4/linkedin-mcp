@@ -145,6 +145,58 @@ export async function publishImage(accessToken, authorUrn, text, imageBuffer, mi
   return { id, url: postUrl(id) };
 }
 
+// Publie un CARROUSEL (document PDF) sur le profil du membre. Meme sequence que
+// l'image (registerUpload -> PUT bytes -> ugcPost) mais avec la recette document
+// et shareMediaCategory=DOCUMENT -> LinkedIn l'affiche en carrousel feuilletable.
+// IMPORTANT (comme le reste de ce module) : non testable sans credentials LinkedIn.
+// A verifier au 1er vrai envoi ; si la recette feedshare-document est refusee, le
+// repli est l'API versionnee /rest/documents (cf. README-DEMO.md).
+export async function publishDocument(accessToken, authorUrn, text, pdfBuffer, title = "Carrousel") {
+  // 1. Enregistre l'upload d'un document.
+  const reg = await fetch(ASSETS_URL, {
+    method: "POST",
+    headers: UGC_HEADERS(accessToken),
+    body: JSON.stringify({
+      registerUploadRequest: {
+        recipes: ["urn:li:digitalmediaRecipe:feedshare-document"],
+        owner: authorUrn,
+        serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
+      },
+    }),
+  });
+  if (!reg.ok) throw new Error(`LinkedIn registerUpload document échec (${reg.status}): ${(await reg.text()).slice(0, 300)}`);
+  const regJson = await reg.json();
+  const asset = regJson.value.asset;
+  const uploadUrl =
+    regJson.value.uploadMechanism["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"].uploadUrl;
+
+  // 2. Upload des bytes du PDF.
+  const put = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/pdf" },
+    body: pdfBuffer,
+  });
+  if (!put.ok) throw new Error(`LinkedIn upload document échec (${put.status})`);
+
+  // 3. Crée le post référençant le document.
+  const payload = {
+    author: authorUrn,
+    lifecycleState: "PUBLISHED",
+    specificContent: {
+      "com.linkedin.ugc.ShareContent": {
+        shareCommentary: { text },
+        shareMediaCategory: "DOCUMENT",
+        media: [{ status: "READY", media: asset, title: { text: title } }],
+      },
+    },
+    visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
+  };
+  const res = await fetch(UGC_URL, { method: "POST", headers: UGC_HEADERS(accessToken), body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error(`LinkedIn publish document échec (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  const id = res.headers.get("x-restli-id") || (await res.json())?.id;
+  return { id, url: postUrl(id) };
+}
+
 function postUrl(id) {
   return id ? `https://www.linkedin.com/feed/update/${id}/` : null;
 }

@@ -3,9 +3,10 @@
 Moteur MCP de contenu LinkedIn, multi-client. Se branche au Claude d'une entreprise
 (claude.ai Team/Enterprise, Claude Desktop, Claude Code) comme connecteur distant.
 
-> **v1.1.0 — beta ouverte.** Le moteur est stable et durci pour la production
+> **v1.2.0 — beta ouverte.** Le moteur est stable et durci pour la production
 > (timeout de rendu, cap de concurrence, écritures atomiques, arrêt propre, sessions
-> bornées). Publie, planifie et apprend de ses résultats directement depuis Claude.
+> bornées). Publie (texte, image, carrousel), planifie et apprend de ses résultats
+> directement depuis Claude.
 > Il évolue selon les retours d'usage. Un bug, une idée, un manque ? Ouvrez une
 > [issue GitHub](https://github.com/KelianMp4/linkedin-mcp/issues) — les retours
 > orientent directement la feuille de route.
@@ -41,9 +42,10 @@ Le **Bearer token = l'identite du client**. Le serveur en deduit `data/<token>/`
 **Publier & suivre**
 - `connect_linkedin()` — renvoie une URL d'autorisation ; apres accord du membre, son
   jeton LinkedIn est stocke **par client** pour publier sur son profil.
-- `post_to_linkedin(texte, visuel?)` — publie (texte ou visuel on-brand) sur le profil
-  connecte, **apres validation humaine du texte**. Ajoute au suivi automatiquement.
-- `schedule_post(texte, when, visuel?)` — planifie une publication a une heure absolue
+- `post_to_linkedin(texte, visuel?, carrousel?)` — publie sur le profil connecte, **apres
+  validation humaine du texte** : texte seul, texte + image (`visuel`), ou texte + carrousel
+  PDF feuilletable (`carrousel`, plan multi-slides). Ajoute au suivi automatiquement.
+- `schedule_post(texte, when, visuel?, carrousel?)` — planifie une publication a une heure absolue
   (ISO 8601). Un worker serveur publie a l'heure prevue ; le texte est valide au moment
   de planifier. `list_scheduled` / `cancel_scheduled` gerent la file.
 - `log_post` / `list_posts` — suivi des posts (metriques saisies a la main).
