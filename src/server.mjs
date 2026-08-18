@@ -22,7 +22,7 @@ import { lintPost } from "./lint.mjs";
 import { analyzePosts, summarizeAnalysis, playbookInsights } from "./analyze.mjs";
 import { createOAuth } from "./oauth.mjs";
 import { demoRouter } from "./demo.mjs";
-import { isConfigured, publishText, publishImage } from "./linkedin.mjs";
+import { isConfigured, publishText, publishImage, publishDocument } from "./linkedin.mjs";
 import { startLinkedinConnect, completeLinkedinConnect, isConnectState } from "./connect.mjs";
 import { createSessionStore } from "./sessions.mjs";
 import { dueJobs, validateWhen } from "./scheduler.mjs";
@@ -127,29 +127,42 @@ async function renderTool(ctx, slides, format, label) {
 }
 
 // Publication LinkedIn partagée par l'outil post_to_linkedin ET le worker de
-// planification : un seul endroit pour le rendu du visuel, la publication et
-// l'ajout au suivi. Lève une erreur kind="no-linkedin" si le client n'a pas
-// connecté de compte. `source` trace l'origine dans l'historique.
-async function publishToLinkedin(ctx, texte, visuel, source) {
+// planification : un seul endroit pour le rendu, la publication et l'ajout au
+// suivi. `media` = { visuel } (une image) OU { carrousel } (plan multi-slides,
+// publié en document PDF feuilletable) OU rien (texte seul). Lève une erreur
+// kind="no-linkedin" si le client n'a pas connecté de compte. `source` trace
+// l'origine dans l'historique.
+async function publishToLinkedin(ctx, texte, media, source) {
   const li = await getLinkedin(ctx);
   if (!li) {
     const e = new Error("Aucun compte LinkedIn connecte");
     e.kind = "no-linkedin";
     throw e;
   }
+  const { visuel, carrousel } = media || {};
   let result;
-  if (visuel) {
+  let format;
+  if (carrousel && carrousel.length) {
+    const brand = await getBrand(ctx);
+    const out = await render(carrousel, brand.visual, "pdf", join(ctx.dir, "fonts"));
+    const pdf = Buffer.from(out.base64, "base64");
+    const title = texte.split(/\r?\n/)[0].slice(0, 100);
+    result = await publishDocument(li.accessToken, li.urn, texte, pdf, title);
+    format = "carrousel";
+  } else if (visuel) {
     const brand = await getBrand(ctx);
     const out = await render([visuel], brand.visual, "png", join(ctx.dir, "fonts"));
     const img = Buffer.from(out.base64, "base64");
     result = await publishImage(li.accessToken, li.urn, texte, img, "image/png");
+    format = "image";
   } else {
     result = await publishText(li.accessToken, li.urn, texte);
+    format = "texte";
   }
   await appendPost(ctx, {
     date: new Date().toISOString().slice(0, 10),
     theme: texte.split(/\r?\n/)[0].slice(0, 80),
-    format: visuel ? "image" : "texte",
+    format,
     url: result.url,
     urn: result.id,
     source,
@@ -158,7 +171,7 @@ async function publishToLinkedin(ctx, texte, visuel, source) {
 }
 
 function buildServer(ctx) {
-  const server = new McpServer({ name: "linkedin-mcp", version: "1.0.0" });
+  const server = new McpServer({ name: "linkedin-mcp", version: "1.2.0" });
 
   server.registerTool(
     "setup_brand",
@@ -425,15 +438,21 @@ function buildServer(ctx) {
     {
       title: "Publier un post sur LinkedIn (apres validation humaine)",
       description:
-        "Publie le post sur le profil LinkedIn connecte (via connect_linkedin). Ne PUBLIE que du texte deja valide par le client (human-in-the-loop) — ne rien poster sans son accord explicite. Un 'visuel' optionnel rend une image on-brand jointe au post. Le post est ajoute au suivi automatiquement.",
+        "Publie le post sur le profil LinkedIn connecte (via connect_linkedin). Ne PUBLIE que du texte deja valide par le client (human-in-the-loop) — ne rien poster sans son accord explicite. Optionnel : 'visuel' (une slide rendue en image jointe) OU 'carrousel' (plan multi-slides publie en document PDF feuilletable). Le post est ajoute au suivi automatiquement.",
       inputSchema: {
         texte: z.string().describe("le texte du post, deja valide par le client"),
         visuel: slideShape.optional().describe("optionnel : une slide on-brand rendue en image et jointe au post"),
+        carrousel: z
+          .array(slideShape)
+          .min(1)
+          .max(8)
+          .optional()
+          .describe("optionnel : plan de slides publie en carrousel (document PDF). Exclusif avec visuel."),
       },
     },
-    async ({ texte, visuel }) => {
+    async ({ texte, visuel, carrousel }) => {
       try {
-        const { result, name } = await publishToLinkedin(ctx, texte, visuel, "post_to_linkedin");
+        const { result, name } = await publishToLinkedin(ctx, texte, { visuel, carrousel }, "post_to_linkedin");
         return {
           content: [
             {
@@ -457,14 +476,20 @@ function buildServer(ctx) {
     {
       title: "Planifier une publication LinkedIn",
       description:
-        "Planifie la publication d'un post (texte deja valide par le client) a une heure ABSOLUE (ISO 8601, ex: 2026-09-20T09:00:00Z). Le serveur publiera automatiquement a l'heure prevue via le compte connecte. Le client valide le texte MAINTENANT (human-in-the-loop) ; la planification honore cet accord. Requiert connect_linkedin.",
+        "Planifie la publication d'un post (texte deja valide par le client) a une heure ABSOLUE (ISO 8601, ex: 2026-09-20T09:00:00Z). Le serveur publiera automatiquement a l'heure prevue via le compte connecte. Optionnel : 'visuel' (image jointe) OU 'carrousel' (plan multi-slides publie en document PDF). Le client valide le texte MAINTENANT (human-in-the-loop) ; la planification honore cet accord. Requiert connect_linkedin.",
       inputSchema: {
         texte: z.string().describe("le texte du post, deja valide par le client"),
         when: z.string().describe("horodatage ISO 8601 absolu, ex: 2026-09-20T09:00:00Z"),
         visuel: slideShape.optional().describe("optionnel : slide on-brand rendue en image et jointe"),
+        carrousel: z
+          .array(slideShape)
+          .min(1)
+          .max(8)
+          .optional()
+          .describe("optionnel : plan de slides publie en carrousel (document PDF). Exclusif avec visuel."),
       },
     },
-    async ({ texte, when, visuel }) => {
+    async ({ texte, when, visuel, carrousel }) => {
       if (!(await getLinkedin(ctx))) {
         return {
           isError: true,
@@ -473,7 +498,12 @@ function buildServer(ctx) {
       }
       const v = validateWhen(when);
       if (!v.ok) return { isError: true, content: [{ type: "text", text: v.error }] };
-      const job = await addScheduledPost(ctx, { when: v.when, texte, visuel: visuel || null });
+      const job = await addScheduledPost(ctx, {
+        when: v.when,
+        texte,
+        visuel: visuel || null,
+        carrousel: carrousel || null,
+      });
       return {
         content: [
           { type: "text", text: `Post planifie pour le ${v.when} (id ${job.id}). Annulable via cancel_scheduled.` },
@@ -690,7 +720,12 @@ async function runScheduler() {
       if (!ctx) continue;
       for (const job of dueJobs(await listScheduled(ctx), now)) {
         try {
-          const { result } = await publishToLinkedin(ctx, job.texte, job.visuel || undefined, "schedule_post");
+          const { result } = await publishToLinkedin(
+            ctx,
+            job.texte,
+            { visuel: job.visuel || undefined, carrousel: job.carrousel || undefined },
+            "schedule_post"
+          );
           await markScheduled(ctx, job.id, {
             status: "sent",
             sentAt: new Date().toISOString(),

@@ -4,6 +4,21 @@ Toutes les évolutions notables de ce projet sont documentées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/) ;
 versionnement [SemVer](https://semver.org/lang/fr/).
 
+## [1.2.0] - 2026-08-18
+
+Publier des carrousels depuis Claude.
+
+### Ajouté
+- **Publication de carrousels** : `post_to_linkedin` et `schedule_post` acceptent
+  désormais un `carrousel` (plan multi-slides) publié en **document PDF feuilletable**
+  sur LinkedIn (`publishDocument` dans `src/linkedin.mjs`). Auparavant, seuls le texte
+  et l'image unique étaient publiables. `visuel` (image) et `carrousel` restent exclusifs.
+
+### Notes
+- L'appel document LinkedIn suit le même schéma que l'image (registerUpload → upload →
+  ugcPost `DOCUMENT`) ; comme le reste des appels LinkedIn, il est à vérifier au premier
+  envoi réel (repli possible sur l'API versionnée `/rest/documents`).
+
 ## [1.1.0] - 2026-08-17
 
 Publier, planifier et apprendre de ses résultats — directement depuis Claude.
@@ -77,5 +92,6 @@ en production : ne jamais figer, ne jamais perdre de données client.
 - Aucune dépendance ajoutée : le durcissement reste sans lib externe.
 - Aucun changement de comportement fonctionnel des outils MCP existants.
 
+[1.2.0]: https://github.com/KelianMp4/linkedin-mcp/releases/tag/v1.2.0
 [1.1.0]: https://github.com/KelianMp4/linkedin-mcp/releases/tag/v1.1.0
 [1.0.0]: https://github.com/KelianMp4/linkedin-mcp/releases/tag/v1.0.0

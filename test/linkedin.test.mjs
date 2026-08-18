@@ -92,3 +92,46 @@ test("getSocialActions : 200 -> parse likes + commentaires", async () => {
     }
   );
 });
+
+test("publishDocument : registerUpload -> PUT PDF -> ugcPost DOCUMENT, renvoie id/url", async () => {
+  const calls = [];
+  const stub = async (url, opts) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes("registerUpload")) {
+      return {
+        ok: true,
+        json: async () => ({
+          value: {
+            asset: "urn:li:digitalmediaAsset:doc123",
+            uploadMechanism: {
+              "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest": { uploadUrl: "https://upload.linkedin/doc" },
+            },
+          },
+        }),
+      };
+    }
+    if (u === "https://upload.linkedin/doc") {
+      assert.equal(opts.method, "PUT");
+      assert.equal(opts.headers["content-type"], "application/pdf");
+      return { ok: true };
+    }
+    if (u.includes("ugcPosts")) {
+      // Vérifie qu'on poste bien en catégorie DOCUMENT avec l'asset uploadé.
+      const body = JSON.parse(opts.body);
+      const share = body.specificContent["com.linkedin.ugc.ShareContent"];
+      assert.equal(share.shareMediaCategory, "DOCUMENT");
+      assert.equal(share.media[0].media, "urn:li:digitalmediaAsset:doc123");
+      return { ok: true, headers: { get: () => "urn:li:share:doc999" }, json: async () => ({}) };
+    }
+    throw new Error("URL inattendue: " + u);
+  };
+
+  await withFetch(stub, async () => {
+    const out = await li.publishDocument("tok", "urn:li:person:x", "Mon carrousel", Buffer.from("%PDF-fake"), "Titre");
+    assert.equal(out.id, "urn:li:share:doc999");
+    assert.match(out.url, /feed\/update\/urn:li:share:doc999/);
+  });
+  // Les 3 étapes ont bien été appelées dans l'ordre.
+  assert.equal(calls.length, 3);
+});
