@@ -13,7 +13,10 @@ Correctif carrousel : la publication de documents fonctionne enfin.
   recette `v2/assets` `feedshare-document`, non servie par cette API → tout envoi
   de carrousel échouait (`registerUpload document échec (403)`). Migration vers
   l'**API versionnée** `/rest/documents` (`initializeUpload`) + `/rest/posts`, avec
-  en-tête `LinkedIn-Version` (overridable via `LINKEDIN_API_VERSION`, défaut `202505`).
+  en-tête `LinkedIn-Version` (overridable via `LINKEDIN_API_VERSION`, défaut `202601`).
+  Note : les versions LinkedIn expirent après ~12 mois — bumper `LINKEDIN_API_VERSION`
+  (env, sans rebuild) quand la version par défaut est sunset (LinkedIn renvoie alors
+  un `426 NONEXISTENT_VERSION`).
   Le `commentary` est désormais échappé au format « Little Text » exigé par l'API
   versionnée. Les posts image/texte sont inchangés (toujours `v2`).
 

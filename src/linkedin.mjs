@@ -21,7 +21,7 @@ const REST_DOCUMENTS_URL = "https://api.linkedin.com/rest/documents?action=initi
 const REST_POSTS_URL = "https://api.linkedin.com/rest/posts";
 // Version d'API LinkedIn (en-tête LinkedIn-Version, format AAAAMM). Overridable
 // via env pour bumper sans redéploiement de code quand LinkedIn sunset une version.
-const linkedinVersion = () => process.env.LINKEDIN_API_VERSION || "202505";
+const linkedinVersion = () => process.env.LINKEDIN_API_VERSION || "202601";
 
 // Scopes : identifier le membre (openid/profile) + publier sur son profil.
 const DEFAULT_SCOPES = "openid profile w_member_social";
