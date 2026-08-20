@@ -171,7 +171,7 @@ async function publishToLinkedin(ctx, texte, media, source) {
 }
 
 function buildServer(ctx) {
-  const server = new McpServer({ name: "linkedin-mcp", version: "1.2.0" });
+  const server = new McpServer({ name: "linkedin-mcp", version: "1.2.1" });
 
   server.registerTool(
     "setup_brand",
