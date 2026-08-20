@@ -14,6 +14,14 @@ const TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 const USERINFO_URL = "https://api.linkedin.com/v2/userinfo";
 const UGC_URL = "https://api.linkedin.com/v2/ugcPosts";
 const ASSETS_URL = "https://api.linkedin.com/v2/assets?action=registerUpload";
+// Documents (carrousels PDF) : l'ancienne recette v2/assets `feedshare-document`
+// renvoie 403 ACCESS_DENIED (non servie par cette API). On passe par l'API
+// versionnée /rest/documents (initializeUpload) puis /rest/posts.
+const REST_DOCUMENTS_URL = "https://api.linkedin.com/rest/documents?action=initializeUpload";
+const REST_POSTS_URL = "https://api.linkedin.com/rest/posts";
+// Version d'API LinkedIn (en-tête LinkedIn-Version, format AAAAMM). Overridable
+// via env pour bumper sans redéploiement de code quand LinkedIn sunset une version.
+const linkedinVersion = () => process.env.LINKEDIN_API_VERSION || "202505";
 
 // Scopes : identifier le membre (openid/profile) + publier sur son profil.
 const DEFAULT_SCOPES = "openid profile w_member_social";
@@ -78,6 +86,19 @@ const UGC_HEADERS = (token) => ({
   "content-type": "application/json",
   "x-restli-protocol-version": "2.0.0",
 });
+
+// En-têtes pour l'API versionnée (/rest/*) : ajoute LinkedIn-Version.
+const REST_HEADERS = (token) => ({
+  ...UGC_HEADERS(token),
+  "linkedin-version": linkedinVersion(),
+});
+
+// L'API versionnée /rest/posts encode `commentary` en "Little Text" : certains
+// caractères réservés doivent être échappés par un backslash, sinon 422. LinkedIn
+// les désaffiche à l'écran, donc ça n'altère pas le rendu pour le lecteur.
+function escapeCommentary(text) {
+  return String(text).replace(/[\\<>#~_|{}()\[\]*@]/g, (c) => `\\${c}`);
+}
 
 // Publie un post TEXTE sur le profil du membre.
 export async function publishText(accessToken, authorUrn, text) {
@@ -145,32 +166,24 @@ export async function publishImage(accessToken, authorUrn, text, imageBuffer, mi
   return { id, url: postUrl(id) };
 }
 
-// Publie un CARROUSEL (document PDF) sur le profil du membre. Meme sequence que
-// l'image (registerUpload -> PUT bytes -> ugcPost) mais avec la recette document
-// et shareMediaCategory=DOCUMENT -> LinkedIn l'affiche en carrousel feuilletable.
-// IMPORTANT (comme le reste de ce module) : non testable sans credentials LinkedIn.
-// A verifier au 1er vrai envoi ; si la recette feedshare-document est refusee, le
-// repli est l'API versionnee /rest/documents (cf. README-DEMO.md).
+// Publie un CARROUSEL (document PDF) sur le profil du membre via l'API versionnée.
+// LinkedIn l'affiche en carrousel feuilletable. Séquence : initializeUpload (obtient
+// une URL signée + l'URN document) -> PUT des bytes -> /rest/posts référençant le doc.
+// L'ancienne voie v2/assets (recette feedshare-document) renvoyait 403 ACCESS_DENIED :
+// cette recette n'est pas servie par l'API legacy, seule /rest/documents la sert.
 export async function publishDocument(accessToken, authorUrn, text, pdfBuffer, title = "Carrousel") {
-  // 1. Enregistre l'upload d'un document.
-  const reg = await fetch(ASSETS_URL, {
+  // 1. Initialise l'upload du document.
+  const init = await fetch(REST_DOCUMENTS_URL, {
     method: "POST",
-    headers: UGC_HEADERS(accessToken),
-    body: JSON.stringify({
-      registerUploadRequest: {
-        recipes: ["urn:li:digitalmediaRecipe:feedshare-document"],
-        owner: authorUrn,
-        serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
-      },
-    }),
+    headers: REST_HEADERS(accessToken),
+    body: JSON.stringify({ initializeUploadRequest: { owner: authorUrn } }),
   });
-  if (!reg.ok) throw new Error(`LinkedIn registerUpload document échec (${reg.status}): ${(await reg.text()).slice(0, 300)}`);
-  const regJson = await reg.json();
-  const asset = regJson.value.asset;
-  const uploadUrl =
-    regJson.value.uploadMechanism["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"].uploadUrl;
+  if (!init.ok) throw new Error(`LinkedIn initializeUpload document échec (${init.status}): ${(await init.text()).slice(0, 300)}`);
+  const initJson = await init.json();
+  const uploadUrl = initJson.value.uploadUrl;
+  const documentUrn = initJson.value.document;
 
-  // 2. Upload des bytes du PDF.
+  // 2. Upload des bytes du PDF vers l'URL signée renvoyée par l'init.
   const put = await fetch(uploadUrl, {
     method: "PUT",
     headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/pdf" },
@@ -178,20 +191,17 @@ export async function publishDocument(accessToken, authorUrn, text, pdfBuffer, t
   });
   if (!put.ok) throw new Error(`LinkedIn upload document échec (${put.status})`);
 
-  // 3. Crée le post référençant le document.
+  // 3. Crée le post référençant le document (API versionnée /rest/posts).
   const payload = {
     author: authorUrn,
+    commentary: escapeCommentary(text),
+    visibility: "PUBLIC",
+    distribution: { feedDistribution: "MAIN_FEED", targetEntities: [], thirdPartyDistributionChannels: [] },
+    content: { media: { title, id: documentUrn } },
     lifecycleState: "PUBLISHED",
-    specificContent: {
-      "com.linkedin.ugc.ShareContent": {
-        shareCommentary: { text },
-        shareMediaCategory: "DOCUMENT",
-        media: [{ status: "READY", media: asset, title: { text: title } }],
-      },
-    },
-    visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
+    isReshareDisabledByAuthor: false,
   };
-  const res = await fetch(UGC_URL, { method: "POST", headers: UGC_HEADERS(accessToken), body: JSON.stringify(payload) });
+  const res = await fetch(REST_POSTS_URL, { method: "POST", headers: REST_HEADERS(accessToken), body: JSON.stringify(payload) });
   if (!res.ok) throw new Error(`LinkedIn publish document échec (${res.status}): ${(await res.text()).slice(0, 300)}`);
   const id = res.headers.get("x-restli-id") || (await res.json())?.id;
   return { id, url: postUrl(id) };

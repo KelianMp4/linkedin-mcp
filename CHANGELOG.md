@@ -4,6 +4,19 @@ Toutes les évolutions notables de ce projet sont documentées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/) ;
 versionnement [SemVer](https://semver.org/lang/fr/).
 
+## [1.2.1] - 2026-08-20
+
+Correctif carrousel : la publication de documents fonctionne enfin.
+
+### Corrigé
+- **Carrousel PDF (403 ACCESS_DENIED)** : `publishDocument` utilisait l'ancienne
+  recette `v2/assets` `feedshare-document`, non servie par cette API → tout envoi
+  de carrousel échouait (`registerUpload document échec (403)`). Migration vers
+  l'**API versionnée** `/rest/documents` (`initializeUpload`) + `/rest/posts`, avec
+  en-tête `LinkedIn-Version` (overridable via `LINKEDIN_API_VERSION`, défaut `202505`).
+  Le `commentary` est désormais échappé au format « Little Text » exigé par l'API
+  versionnée. Les posts image/texte sont inchangés (toujours `v2`).
+
 ## [1.2.0] - 2026-08-18
 
 Publier des carrousels depuis Claude.

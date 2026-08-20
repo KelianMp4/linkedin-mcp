@@ -93,22 +93,19 @@ test("getSocialActions : 200 -> parse likes + commentaires", async () => {
   );
 });
 
-test("publishDocument : registerUpload -> PUT PDF -> ugcPost DOCUMENT, renvoie id/url", async () => {
+test("publishDocument : initializeUpload -> PUT PDF -> /rest/posts, renvoie id/url", async () => {
   const calls = [];
   const stub = async (url, opts) => {
     const u = String(url);
     calls.push(u);
-    if (u.includes("registerUpload")) {
+    if (u.includes("/rest/documents")) {
+      // API versionnée : en-tête LinkedIn-Version présent, owner transmis.
+      assert.match(opts.headers["linkedin-version"], /^\d{6}$/);
+      const body = JSON.parse(opts.body);
+      assert.equal(body.initializeUploadRequest.owner, "urn:li:person:x");
       return {
         ok: true,
-        json: async () => ({
-          value: {
-            asset: "urn:li:digitalmediaAsset:doc123",
-            uploadMechanism: {
-              "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest": { uploadUrl: "https://upload.linkedin/doc" },
-            },
-          },
-        }),
+        json: async () => ({ value: { uploadUrl: "https://upload.linkedin/doc", document: "urn:li:document:doc123" } }),
       };
     }
     if (u === "https://upload.linkedin/doc") {
@@ -116,19 +113,19 @@ test("publishDocument : registerUpload -> PUT PDF -> ugcPost DOCUMENT, renvoie i
       assert.equal(opts.headers["content-type"], "application/pdf");
       return { ok: true };
     }
-    if (u.includes("ugcPosts")) {
-      // Vérifie qu'on poste bien en catégorie DOCUMENT avec l'asset uploadé.
+    if (u.includes("/rest/posts")) {
+      // Vérifie qu'on référence le document uploadé + échappement du commentary.
       const body = JSON.parse(opts.body);
-      const share = body.specificContent["com.linkedin.ugc.ShareContent"];
-      assert.equal(share.shareMediaCategory, "DOCUMENT");
-      assert.equal(share.media[0].media, "urn:li:digitalmediaAsset:doc123");
+      assert.equal(body.content.media.id, "urn:li:document:doc123");
+      assert.equal(body.visibility, "PUBLIC");
+      assert.equal(body.commentary, "Mon carrousel \\(test\\)");
       return { ok: true, headers: { get: () => "urn:li:share:doc999" }, json: async () => ({}) };
     }
     throw new Error("URL inattendue: " + u);
   };
 
   await withFetch(stub, async () => {
-    const out = await li.publishDocument("tok", "urn:li:person:x", "Mon carrousel", Buffer.from("%PDF-fake"), "Titre");
+    const out = await li.publishDocument("tok", "urn:li:person:x", "Mon carrousel (test)", Buffer.from("%PDF-fake"), "Titre");
     assert.equal(out.id, "urn:li:share:doc999");
     assert.match(out.url, /feed\/update\/urn:li:share:doc999/);
   });
